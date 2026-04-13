@@ -1,0 +1,14 @@
+# Local-file pipeline dependencies.
+# Install with: python -m pip install -r requirements-local.txt
+# For YouTube/Kick URL downloads use requirements.txt, or add: python -m pip install yt-dlp
+
+faster-whisper>=1.0.0
+opencv-python-headless>=4.9.0
+numpy>=1.26.0
+pyyaml>=6.0
+rich>=13.0.0
+librosa>=0.10.0
+soundfile>=0.12.0
+scipy>=1.11.0
+Pillow>=10.0.0
+pytest>=8.0.0

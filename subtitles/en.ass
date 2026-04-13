@@ -1,0 +1,18 @@
+[Script Info]
+; FOX-like one-word-only ASS subtitle file
+; Exactly one word per Dialogue line
+Title: FOX One Word EN
+ScriptType: v4.00+
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+PlayResX: 1080
+PlayResY: 1920
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: FOX_ONE_WORD,Arial,92,&H00FFFFFF,&H000000FF,&H00121212,&H00000000,-1,0,0,0,88,100,-1.5,0,1,1.6,1.0,2,80,80,190,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+; RULE: exactly ONE word per Dialogue line

@@ -1,0 +1,110 @@
+{
+  "input": "",
+  "output_dir": "output",
+  "temp_dir": "temp",
+  "language": "auto",
+  "subtitles_enabled": true,
+  "subtitles_mode": "word_by_word",
+  "subtitles_position": "between_webcam_and_game",
+  "subtitles_theme": "red",
+  "subtitles_max_words_per_group": 1,
+  "subtitles_font_name": "Arial Black",
+  "subtitles_font_path": "fonts/subtitles.ttf",
+  "subtitles_template_ru": "subtitles/ru.ass",
+  "subtitles_template_en": "subtitles/en.ass",
+  "subtitles_between_y_ratio": 0.42,
+  "whisper_model_cache_dir": "models/whisper",
+  "webcam_detection": "auto",
+  "webcam_edge_margin_ratio": 0.15,
+  "webcam_top_ratio": 0.33,
+  "content_bottom_ratio": 0.67,
+  "highlight_target_count_per_hour": 15,
+  "min_clip_duration_sec": 20,
+  "preferred_clip_duration_sec": 45,
+  "max_clip_duration_sec": 60,
+  "hard_max_clip_duration_sec": 75,
+  "cta": {
+    "enabled": true,
+    "trigger_range_sec": [7.0, 10.0],
+    "freeze_duration_sec": 4.0,
+    "grayscale_strength": 1.0,
+    "text": "THE GAME IN BIO",
+    "text_en": "THE GAME IN BIO",
+    "text_ru": "ИГРА В ОПИСАНИИ",
+    "language": "auto",
+    "font_name": "Impact",
+    "font_path": "fonts/cta.ttf",
+    "font_size": 78,
+    "font_color": "0xFFD200",
+    "border_color": "black",
+    "shadow_color": "red@0.85",
+    "typewriter_enabled": true,
+    "typewriter_speed": 0.16,
+    "voice_mp3_path": "sounds/voice/cta.mp3"
+  },
+  "music": {
+    "enabled": false,
+    "folder": "sounds/music",
+    "volume_min": 0.1,
+    "volume_max": 0.2,
+    "duck_under_speech": true
+  },
+  "cleanup_temp_files": true,
+  "delete_input_after_success": false,
+  "export": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "codec": "libx264",
+    "bitrate": "8M",
+    "crf": 22,
+    "preset": "slow",
+    "audio_codec": "aac",
+    "audio_bitrate": "192k"
+  },
+  "variation": {
+    "enabled": true,
+    "intro_trim_randomization": 1.5,
+    "cta_time_randomization": true,
+    "slight_zoom_variants": 0.05,
+    "subtitle_style_variants": true,
+    "bgm_random_pick": true,
+    "cta_text_variants": [
+      "THE GAME IN BIO",
+      "LINK IN BIO",
+      "FULL VIDEO IN BIO",
+      "WATCH FULL IN BIO",
+      "BIO FOR MORE",
+      "CHECK BIO",
+      "FULL STREAM IN BIO",
+      "MORE IN BIO"
+    ],
+    "cta_text_variants_ru": [
+      "ИГРА В ОПИСАНИИ",
+      "ССЫЛКА В ОПИСАНИИ",
+      "ПОЛНОЕ ВИДЕО В ОПИСАНИИ",
+      "ЕЩЕ БОЛЬШЕ В ОПИСАНИИ"
+    ]
+  },
+  "bot_preset_fields": {
+    "available_themes": ["red", "purple", "black", "yellow"],
+    "available_cta_texts": [
+      "THE GAME IN BIO",
+      "LINK IN BIO",
+      "FULL VIDEO IN BIO",
+      "WATCH FULL IN BIO",
+      "BIO FOR MORE",
+      "CHECK BIO",
+      "FULL STREAM IN BIO",
+      "MORE IN BIO"
+    ],
+    "available_cta_texts_ru": [
+      "ИГРА В ОПИСАНИИ",
+      "ССЫЛКА В ОПИСАНИИ",
+      "ПОЛНОЕ ВИДЕО В ОПИСАНИИ",
+      "ЕЩЕ БОЛЬШЕ В ОПИСАНИИ"
+    ],
+    "available_languages": ["auto", "ru", "en"]
+  },
+  "debug": false
+}

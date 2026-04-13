@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.egg-info
+venv/
+.venv/
+.venv*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project
+output/
+temp/
+downloads/
+models/
+tools/
+rollback_snapshots/
+*.mp4
+*.mkv
+*.wav
+*.ass
+*.srt
+!subtitles/*.ass
+sounds/music/*
+sounds/voice/*
+!sounds/music/.gitkeep
+!sounds/voice/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
