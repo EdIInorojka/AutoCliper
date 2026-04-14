@@ -133,6 +133,7 @@ class AppConfig:
     manual_webcam_crop: Optional[List[int]] = None
     manual_slot_crop: Optional[List[int]] = None
     layout_preview_enabled: bool = False
+    layout_preview_time_sec: Optional[float] = None
     layout_debug_preview: str = "layout_debug_preview.jpg"
     layout_preview_save_path: str = "layout_selection.json"
     webcam_top_ratio: float = 0.33

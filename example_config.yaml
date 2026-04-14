@@ -31,6 +31,7 @@ webcam_edge_margin_ratio: 0.15
 manual_webcam_crop:
 manual_slot_crop:
 layout_preview_enabled: false
+layout_preview_time_sec:
 layout_debug_preview: "layout_debug_preview.jpg"
 layout_preview_save_path: "layout_selection.json"
 webcam_top_ratio: 0.33

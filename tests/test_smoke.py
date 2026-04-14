@@ -28,6 +28,7 @@ class TestConfig(unittest.TestCase):
         self.assertIsNone(config.manual_webcam_crop)
         self.assertIsNone(config.manual_slot_crop)
         self.assertFalse(config.layout_preview_enabled)
+        self.assertIsNone(config.layout_preview_time_sec)
         self.assertEqual(config.layout_debug_preview, "layout_debug_preview.jpg")
         self.assertEqual(config.layout_preview_save_path, "layout_selection.json")
 
@@ -61,6 +62,13 @@ class TestConfig(unittest.TestCase):
 
 
 class TestHelpers(unittest.TestCase):
+    def test_parse_preview_time(self):
+        from app.cli import _parse_time_sec
+
+        self.assertEqual(_parse_time_sec("03:00"), 180.0)
+        self.assertEqual(_parse_time_sec("01:02:03"), 3723.0)
+        self.assertEqual(_parse_time_sec("12.5"), 12.5)
+
     def test_safe_filename(self):
         from app.utils.helpers import safe_filename
         # <>:" are 4 chars each replaced with _
@@ -98,6 +106,29 @@ class TestLayoutSelector(unittest.TestCase):
         self.assertEqual(config.manual_webcam_crop, [10, 20, 300, 168])
         self.assertEqual(config.manual_slot_crop, [400, 120, 1200, 700])
         self.assertEqual(config.webcam_detection, "auto")
+
+    def test_initial_preview_time_prefers_config_time(self):
+        from app.config import AppConfig
+        from app.layout_selector import _fmt_timestamp, _initial_preview_time
+        from app.probe import VideoInfo
+
+        config = AppConfig()
+        config.layout_preview_time_sec = 777.0
+        info = VideoInfo("test.mp4", 1200.0, 30.0, 1920, 1080, [])
+
+        self.assertEqual(_initial_preview_time(info, config), 777.0)
+        self.assertEqual(_fmt_timestamp(777.0), "12:57")
+
+    def test_initial_preview_time_clamps_to_duration(self):
+        from app.config import AppConfig
+        from app.layout_selector import _initial_preview_time
+        from app.probe import VideoInfo
+
+        config = AppConfig()
+        config.layout_preview_time_sec = 999.0
+        info = VideoInfo("test.mp4", 120.0, 30.0, 1920, 1080, [])
+
+        self.assertEqual(_initial_preview_time(info, config), 120.0)
 
     def test_apply_selection_with_one_crop_uses_no_webcam_top_subtitles(self):
         from app.config import AppConfig

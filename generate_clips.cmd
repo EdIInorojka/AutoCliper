@@ -52,6 +52,10 @@ echo    [2] No, use auto layout
 choice /C 12 /N /M "Choice: "
 set "SC_PREVIEW=--preview-layout"
 if errorlevel 2 set "SC_PREVIEW="
+set "SC_PREVIEW_TIME="
+if defined SC_PREVIEW (
+    set /p "SC_PREVIEW_TIME=Preview start time (Enter = middle, examples: 180 or 03:00): "
+)
 
 echo.
 echo 7. Delete source video after successful render?
@@ -72,6 +76,7 @@ echo Output dir:  %SC_OUT%
 echo Clips:       %SC_CLIPS%
 if defined SC_PREVIEW (
     echo Layout UI:   yes
+    if defined SC_PREVIEW_TIME echo Preview at:  %SC_PREVIEW_TIME%
 ) else (
     echo Layout UI:   no
 )
@@ -86,9 +91,17 @@ echo Pipeline logs: prerequisites, ingest, probe, webcam, ASR, highlights, rende
 echo.
 
 if defined SC_VOICE (
-    call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+    if defined SC_PREVIEW_TIME (
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
+    ) else (
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+    )
 ) else (
-    call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+    if defined SC_PREVIEW_TIME (
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
+    ) else (
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+    )
 )
 
 endlocal

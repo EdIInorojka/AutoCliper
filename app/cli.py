@@ -2,6 +2,23 @@
 
 from __future__ import annotations
 
+
+def _parse_time_sec(raw: str) -> float:
+    raw = raw.strip()
+    if not raw:
+        raise ValueError("empty time")
+    if ":" not in raw:
+        return max(0.0, float(raw.replace(",", ".")))
+    parts = [float(part.replace(",", ".")) for part in raw.split(":")]
+    if len(parts) == 2:
+        minutes, seconds = parts
+        return max(0.0, minutes * 60 + seconds)
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+        return max(0.0, hours * 3600 + minutes * 60 + seconds)
+    raise ValueError(f"Invalid time format: {raw}")
+
+
 def cli_entry():
     """Entry point for pyproject.toml script."""
     import argparse
@@ -26,6 +43,11 @@ def cli_entry():
         "--preview-layout",
         action="store_true",
         help="Open a screenshot selector for manual webcam/slot crops before rendering",
+    )
+    parser.add_argument(
+        "--preview-time",
+        required=False,
+        help="Initial layout preview time in seconds, MM:SS, or HH:MM:SS",
     )
     parser.add_argument("--no-webcam", action="store_true", help="Force no webcam detection")
     music_group = parser.add_mutually_exclusive_group()
@@ -76,6 +98,13 @@ def cli_entry():
         config.debug = True
     if args.preview_layout:
         config.layout_preview_enabled = True
+    if args.preview_time:
+        try:
+            config.layout_preview_time_sec = _parse_time_sec(args.preview_time)
+            config.layout_preview_enabled = True
+        except ValueError as e:
+            console.print(f"[red]Invalid --preview-time: {e}[/red]")
+            raise SystemExit(2)
     if args.no_webcam:
         config.webcam_detection = "off"
     if args.music:
@@ -112,6 +141,10 @@ def cli_entry():
         console.print(f"Manual webcam crop: {config.manual_webcam_crop or 'none'}")
         console.print(f"Manual slot crop: {config.manual_slot_crop or 'none'}")
         console.print(f"Layout preview selector: {config.layout_preview_enabled}")
+        console.print(
+            "Layout preview initial time: "
+            f"{config.layout_preview_time_sec if config.layout_preview_time_sec is not None else 'middle'}"
+        )
         console.print(f"Layout debug preview: {config.layout_debug_preview}")
         console.print(f"Layout selection save path: {config.layout_preview_save_path}")
         console.print(f"Music: {config.music.enabled}")
