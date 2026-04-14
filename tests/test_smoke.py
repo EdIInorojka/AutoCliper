@@ -690,6 +690,20 @@ class TestContentDetector(unittest.TestCase):
         self.assertLess(left_candidate[0], 1920 * 0.20)
         self.assertGreater(right_candidate[0], 1920 * 0.40)
 
+    def test_frame_content_candidates_extract_large_game_frame(self):
+        import cv2
+        import numpy as np
+        from app.content_detector import _frame_content_candidates
+
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        cv2.rectangle(frame, (58, 217), (1182, 893), (255, 255, 255), 5)
+        cv2.rectangle(frame, (1243, 25), (1864, 392), (255, 255, 255), 5)
+
+        candidates = _frame_content_candidates(cv2, np, [frame])
+        game_candidates = [crop for crop, reason in candidates if reason.startswith("frame_rect_")]
+
+        self.assertTrue(any(crop[0] < 80 and crop[1] < 240 and crop[2] > 1100 for crop in game_candidates))
+
     def test_content_manual_override_has_priority(self):
         from app.content_detector import detect_content_area
         from app.config import AppConfig

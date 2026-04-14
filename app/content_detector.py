@@ -101,7 +101,8 @@ def detect_content_area(
         return ContentDetectionResult(True, fallback_crop, 0.35, fallback_reason)
 
     activity = _activity_map(cv2, np, frames)
-    candidates = _content_candidates(src_w, src_h, webcam_crop, activity)
+    frame_rects = _frame_content_candidates(cv2, np, frames)
+    candidates = _content_candidates(src_w, src_h, webcam_crop, activity, frame_rects)
     if not candidates:
         return ContentDetectionResult(True, fallback_crop, 0.35, fallback_reason)
 
@@ -117,6 +118,8 @@ def detect_content_area(
             score += 0.02
         elif reason.startswith("active_"):
             score += 0.12
+        elif reason.startswith("frame_rect_"):
+            score += 0.22
         if score > best_score:
             best_score = score
             best_crop = crop
@@ -205,6 +208,7 @@ def _content_candidates(
     src_h: int,
     webcam_crop: Optional[tuple[int, int, int, int]],
     activity: Any | None = None,
+    frame_rects: Optional[list[tuple[tuple[float, float, float, float], str]]] = None,
 ) -> list[tuple[tuple[int, int, int, int], str]]:
     crops: list[tuple[tuple[int, int, int, int], str]] = []
 
@@ -227,6 +231,8 @@ def _content_candidates(
     add(src_w * 0.16, src_h * 0.20, src_w * 0.82, src_h * 0.72, "lower_right_game")
     for crop, reason in _active_content_candidates(src_w, src_h, activity):
         add(*crop, reason)
+    for crop, reason in frame_rects or []:
+        add(*crop, reason)
     for crop, reason in _profile_content_candidates(src_w, src_h, webcam_crop):
         add(*crop, reason)
 
@@ -237,6 +243,81 @@ def _content_candidates(
             seen.add(crop)
             unique.append((crop, reason))
     return unique
+
+
+def _frame_content_candidates(
+    cv2: Any,
+    np: Any,
+    frames: list[Any],
+) -> list[tuple[tuple[float, float, float, float], str]]:
+    if not frames:
+        return []
+
+    src_h, src_w = frames[0].shape[:2]
+    candidates: list[tuple[tuple[float, float, float, float], str]] = []
+    sample_indexes = sorted({0, len(frames) // 2, max(0, len(frames) - 1)})
+
+    for sample_index in sample_indexes:
+        frame = frames[sample_index]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, 50, 150)
+        for kernel_size in (3, 5, 9, 15, 25):
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
+            closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+            dilated = cv2.dilate(closed, kernel, iterations=1)
+            contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+                area_ratio = (w * h) / max(1, src_w * src_h)
+                aspect = w / max(1, h)
+                if area_ratio < 0.16 or area_ratio > 0.78:
+                    continue
+                if aspect < 1.15 or aspect > 3.50:
+                    continue
+                if w < src_w * 0.45 or h < src_h * 0.32:
+                    continue
+                margin = max(4, int(max(w, h) * 0.006))
+                candidates.append(
+                    (
+                        (
+                            max(0, x - margin),
+                            max(0, y - margin),
+                            min(src_w - max(0, x - margin), w + margin * 2),
+                            min(src_h - max(0, y - margin), h + margin * 2),
+                        ),
+                        f"frame_rect_k{kernel_size}",
+                    )
+                )
+
+    return _dedupe_similar_crops(candidates)
+
+
+def _dedupe_similar_crops(
+    candidates: list[tuple[tuple[float, float, float, float], str]],
+) -> list[tuple[tuple[float, float, float, float], str]]:
+    unique: list[tuple[tuple[float, float, float, float], str]] = []
+    for crop, reason in sorted(candidates, key=lambda item: item[0][2] * item[0][3], reverse=True):
+        if any(_crop_iou(crop, existing_crop) > 0.90 for existing_crop, _ in unique):
+            continue
+        unique.append((crop, reason))
+    return unique
+
+
+def _crop_iou(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix1 = max(ax, bx)
+    iy1 = max(ay, by)
+    ix2 = min(ax + aw, bx + bw)
+    iy2 = min(ay + ah, by + bh)
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    intersection = (ix2 - ix1) * (iy2 - iy1)
+    union = aw * ah + bw * bh - intersection
+    return float(intersection / union) if union > 0 else 0.0
 
 
 def _active_content_candidates(
