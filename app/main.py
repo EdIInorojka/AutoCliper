@@ -48,6 +48,32 @@ def run_pipeline(config: AppConfig) -> None:
         console.print(f"[red]Probe failed: {e}[/red]")
         raise SystemExit(1)
 
+    if config.layout_preview_enabled:
+        console.print("\n[step 2.5] Opening layout preview selector...")
+        try:
+            from app.layout_selector import (
+                apply_layout_selection,
+                save_layout_selection,
+                select_layout_crops,
+            )
+
+            selection = select_layout_crops(video_path, video_info, config)
+            if selection is None:
+                console.print("[yellow]Layout preview closed without selection; using automatic layout.[/yellow]")
+            else:
+                selection_mode = apply_layout_selection(config, selection)
+                saved_path = save_layout_selection(config, selection, selection_mode)
+                console.print(
+                    "[cyan]Layout preview applied: "
+                    f"mode={selection_mode}, webcam={config.manual_webcam_crop or 'none'}, "
+                    f"slot={config.manual_slot_crop or 'none'}[/cyan]"
+                )
+                if saved_path is not None:
+                    console.print(f"[dim]Layout selection saved: {saved_path}[/dim]")
+        except Exception as e:
+            console.print(f"[red]Layout preview failed: {e}[/red]")
+            raise SystemExit(1)
+
     # Step 3: Webcam detection
     console.print("\n[step 3] Detecting webcam...")
     webcam_result = None

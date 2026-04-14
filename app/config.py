@@ -132,7 +132,9 @@ class AppConfig:
     webcam_edge_margin_ratio: float = 0.15
     manual_webcam_crop: Optional[List[int]] = None
     manual_slot_crop: Optional[List[int]] = None
+    layout_preview_enabled: bool = False
     layout_debug_preview: str = "layout_debug_preview.jpg"
+    layout_preview_save_path: str = "layout_selection.json"
     webcam_top_ratio: float = 0.33
     content_bottom_ratio: float = 0.67
     highlight_target_count_per_hour: int = 15
@@ -196,14 +198,14 @@ def _read_mapping_file(path: Path) -> dict:
                 "Reading .yaml/.yml requires PyYAML. Install it (pip install pyyaml) "
                 "or use example_config.json / --config path\\to\\file.json"
             ) from e
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             return yaml.safe_load(f) or {}
     if suffix == ".json":
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     # Unknown extension: try JSON first, then YAML
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except json.JSONDecodeError:
         try:
@@ -212,7 +214,7 @@ def _read_mapping_file(path: Path) -> dict:
             raise RuntimeError(
                 f"Could not parse {path} as JSON and PyYAML is not installed."
             ) from e
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             return yaml.safe_load(f) or {}
 
 

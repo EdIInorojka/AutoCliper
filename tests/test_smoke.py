@@ -27,7 +27,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.webcam_edge_margin_ratio, 0.15)
         self.assertIsNone(config.manual_webcam_crop)
         self.assertIsNone(config.manual_slot_crop)
+        self.assertFalse(config.layout_preview_enabled)
         self.assertEqual(config.layout_debug_preview, "layout_debug_preview.jpg")
+        self.assertEqual(config.layout_preview_save_path, "layout_selection.json")
 
     def test_load_example_config(self):
         from app.config import load_config, AppConfig
@@ -36,6 +38,17 @@ class TestConfig(unittest.TestCase):
         if j.exists():
             config = load_config(j)
             self.assertIsInstance(config, AppConfig)
+
+    def test_load_json_config_with_utf8_bom(self):
+        from app.config import load_config
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text('\ufeff{"input": "video.mp4"}', encoding="utf-8")
+
+            config = load_config(path)
+
+        self.assertEqual(config.input, "video.mp4")
 
     def test_subtitle_themes(self):
         from app.config import SUBTITLE_THEMES
@@ -64,6 +77,47 @@ class TestHelpers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = ensure_dir(os.path.join(td, "sub", "dir"))
             self.assertTrue(p.exists())
+
+
+class TestLayoutSelector(unittest.TestCase):
+    def test_apply_selection_with_both_crops_uses_split_layout(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig()
+        selection = LayoutSelection(
+            webcam_crop=(10, 20, 300, 168),
+            slot_crop=(400, 120, 1200, 700),
+            source_size=(1920, 1080),
+            preview_time_sec=120.0,
+        )
+
+        mode = apply_layout_selection(config, selection)
+
+        self.assertEqual(mode, "manual_split")
+        self.assertEqual(config.manual_webcam_crop, [10, 20, 300, 168])
+        self.assertEqual(config.manual_slot_crop, [400, 120, 1200, 700])
+        self.assertEqual(config.webcam_detection, "auto")
+
+    def test_apply_selection_with_one_crop_uses_no_webcam_top_subtitles(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig()
+        selection = LayoutSelection(
+            webcam_crop=(100, 50, 500, 280),
+            slot_crop=None,
+            source_size=(1920, 1080),
+            preview_time_sec=120.0,
+        )
+
+        mode = apply_layout_selection(config, selection)
+
+        self.assertEqual(mode, "single_crop_no_webcam")
+        self.assertIsNone(config.manual_webcam_crop)
+        self.assertEqual(config.manual_slot_crop, [100, 50, 500, 280])
+        self.assertEqual(config.webcam_detection, "off")
+        self.assertEqual(config.subtitles_position, "slot_top")
 
 
 class TestSubtitles(unittest.TestCase):

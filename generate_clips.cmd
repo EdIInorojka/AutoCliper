@@ -46,7 +46,15 @@ set /p "SC_CLIPS=5. Number of clips (Enter = 5): "
 if not defined SC_CLIPS set "SC_CLIPS=5"
 
 echo.
-echo 6. Delete source video after successful render?
+echo 6. Open layout preview selector?
+echo    [1] Yes
+echo    [2] No, use auto layout
+choice /C 12 /N /M "Choice: "
+set "SC_PREVIEW=--preview-layout"
+if errorlevel 2 set "SC_PREVIEW="
+
+echo.
+echo 7. Delete source video after successful render?
 echo    [1] Yes
 echo    [2] No
 choice /C 12 /N /M "Choice: "
@@ -62,6 +70,11 @@ echo Language:    %SC_LANG%
 echo CTA voice:   %SC_VOICE%
 echo Output dir:  %SC_OUT%
 echo Clips:       %SC_CLIPS%
+if defined SC_PREVIEW (
+    echo Layout UI:   yes
+) else (
+    echo Layout UI:   no
+)
 echo Music:       off
 if defined SC_DELETE_SOURCE (
     echo Delete src:  yes
@@ -73,9 +86,9 @@ echo Pipeline logs: prerequisites, ingest, probe, webcam, ASR, highlights, rende
 echo.
 
 if defined SC_VOICE (
-    call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_DELETE_SOURCE%
+    call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
 ) else (
-    call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_DELETE_SOURCE%
+    call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
 )
 
 endlocal

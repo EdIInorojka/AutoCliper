@@ -22,6 +22,11 @@ def cli_entry():
     parser.add_argument("--theme", choices=["red", "purple", "black", "yellow"], required=False, help="Subtitle theme")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without processing")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--preview-layout",
+        action="store_true",
+        help="Open a screenshot selector for manual webcam/slot crops before rendering",
+    )
     parser.add_argument("--no-webcam", action="store_true", help="Force no webcam detection")
     music_group = parser.add_mutually_exclusive_group()
     music_group.add_argument("--music", action="store_true", help="Enable background music for this run")
@@ -69,6 +74,8 @@ def cli_entry():
         config.subtitles_theme = args.theme
     if args.debug:
         config.debug = True
+    if args.preview_layout:
+        config.layout_preview_enabled = True
     if args.no_webcam:
         config.webcam_detection = "off"
     if args.music:
@@ -104,7 +111,9 @@ def cli_entry():
         console.print(f"Webcam detection: {config.webcam_detection}")
         console.print(f"Manual webcam crop: {config.manual_webcam_crop or 'none'}")
         console.print(f"Manual slot crop: {config.manual_slot_crop or 'none'}")
+        console.print(f"Layout preview selector: {config.layout_preview_enabled}")
         console.print(f"Layout debug preview: {config.layout_debug_preview}")
+        console.print(f"Layout selection save path: {config.layout_preview_save_path}")
         console.print(f"Music: {config.music.enabled}")
         console.print(f"CTA: {config.cta.enabled} (language={config.cta.language})")
         console.print(f"CTA voice: {config.cta.voice_mp3_path or 'none'}")
