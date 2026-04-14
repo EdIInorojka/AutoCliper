@@ -15,6 +15,22 @@ console = get_console()
 
 Crop = tuple[int, int, int, int]
 
+THEME = {
+    "bg": "#111827",
+    "panel": "#172033",
+    "panel_2": "#0b1220",
+    "text": "#f8fafc",
+    "muted": "#94a3b8",
+    "webcam": "#22c55e",
+    "webcam_active": "#16a34a",
+    "slot": "#fb5068",
+    "slot_active": "#e11d48",
+    "apply": "#facc15",
+    "apply_active": "#eab308",
+    "apply_text": "#111827",
+    "line": "#334155",
+}
+
 
 @dataclass
 class LayoutSelection:
@@ -51,7 +67,8 @@ def select_layout_crops(
     source_h, source_w = frame_rgb.shape[:2]
 
     root = tk.Tk()
-    root.title("StreamCuter layout preview")
+    root.title("StreamCuter Layout Preview")
+    root.configure(bg=THEME["bg"])
 
     screen_w = max(800, int(root.winfo_screenwidth() * 0.92))
     screen_h = max(520, int(root.winfo_screenheight() * 0.82))
@@ -77,19 +94,61 @@ def select_layout_crops(
         "preview_time_sec": preview_time_sec,
     }
 
-    toolbar = tk.Frame(root)
-    toolbar.pack(fill=tk.X, padx=8, pady=6)
+    shell = tk.Frame(root, bg=THEME["bg"])
+    shell.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
 
-    canvas = tk.Canvas(root, width=display_w, height=display_h, highlightthickness=0, cursor="crosshair")
-    canvas.pack(padx=8, pady=(0, 8))
+    header = tk.Frame(shell, bg=THEME["bg"])
+    header.pack(fill=tk.X, pady=(0, 8))
+    tk.Label(
+        header,
+        text="StreamCuter Layout Preview",
+        bg=THEME["bg"],
+        fg=THEME["text"],
+        font=("Segoe UI", 16, "bold"),
+        anchor="w",
+    ).pack(side=tk.LEFT)
+    mode_badge = tk.Label(
+        header,
+        text="WEBCAM",
+        bg=THEME["webcam"],
+        fg=THEME["panel_2"],
+        font=("Segoe UI", 10, "bold"),
+        padx=12,
+        pady=4,
+    )
+    mode_badge.pack(side=tk.RIGHT)
+
+    toolbar = tk.Frame(shell, bg=THEME["panel"])
+    toolbar.pack(fill=tk.X, pady=(0, 8))
+
+    canvas_shell = tk.Frame(shell, bg=THEME["line"], padx=2, pady=2)
+    canvas_shell.pack(pady=(0, 8))
+    canvas = tk.Canvas(
+        canvas_shell,
+        width=display_w,
+        height=display_h,
+        bg=THEME["panel_2"],
+        highlightthickness=0,
+        cursor="crosshair",
+    )
+    canvas.pack()
     image_item = canvas.create_image(0, 0, anchor=tk.NW, image=state["photo"])
 
-    time_bar = tk.Frame(root)
-    time_bar.pack(fill=tk.X, padx=8, pady=(0, 6))
+    time_bar = tk.Frame(shell, bg=THEME["panel"])
+    time_bar.pack(fill=tk.X, pady=(0, 8))
     time_label = tk.StringVar(
         value=f"Preview frame: {_fmt_timestamp(preview_time_sec)} / {_fmt_timestamp(duration_sec)}"
     )
-    tk.Label(time_bar, textvariable=time_label, width=24, anchor="w").pack(side=tk.LEFT)
+    tk.Label(
+        time_bar,
+        textvariable=time_label,
+        width=26,
+        anchor="w",
+        bg=THEME["panel"],
+        fg=THEME["text"],
+        font=("Segoe UI", 10, "bold"),
+        padx=10,
+    ).pack(side=tk.LEFT)
     time_scale = tk.Scale(
         time_bar,
         from_=0,
@@ -97,17 +156,71 @@ def select_layout_crops(
         orient=tk.HORIZONTAL,
         showvalue=False,
         resolution=0.5 if duration_sec <= 180 else 1.0,
+        bg=THEME["panel"],
+        fg=THEME["text"],
+        activebackground=THEME["apply"],
+        troughcolor=THEME["line"],
+        highlightthickness=0,
+        bd=0,
     )
     time_scale.set(preview_time_sec)
     time_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     status = tk.StringVar(value="Select webcam, drag on the frame, then Apply.")
-    status_label = tk.Label(root, textvariable=status, anchor="w")
-    status_label.pack(fill=tk.X, padx=8, pady=(0, 8))
+    status_label = tk.Label(
+        shell,
+        textvariable=status,
+        anchor="w",
+        bg=THEME["panel"],
+        fg=THEME["muted"],
+        font=("Segoe UI", 10),
+        padx=12,
+        pady=8,
+    )
+    status_label.pack(fill=tk.X)
+
+    buttons: dict[str, object] = {}
+
+    def styled_button(parent, text: str, bg: str, active_bg: str, command, width: int):
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            width=width,
+            bg=bg,
+            fg=THEME["panel_2"],
+            activebackground=active_bg,
+            activeforeground=THEME["panel_2"],
+            relief=tk.FLAT,
+            bd=0,
+            padx=10,
+            pady=8,
+            cursor="hand2",
+            font=("Segoe UI", 10, "bold"),
+        )
+
+    def refresh_button_styles() -> None:
+        webcam_button = buttons.get("webcam")
+        slot_button = buttons.get("slot")
+        if webcam_button is not None:
+            webcam_button.configure(
+                bg=THEME["webcam_active"] if state["mode"] == "webcam" else THEME["webcam"],
+                fg=THEME["text"] if state["mode"] == "webcam" else THEME["panel_2"],
+            )
+        if slot_button is not None:
+            slot_button.configure(
+                bg=THEME["slot_active"] if state["mode"] == "slot" else THEME["slot"],
+                fg=THEME["text"] if state["mode"] == "slot" else THEME["panel_2"],
+            )
 
     def set_mode(mode: str) -> None:
         state["mode"] = mode
         label = "webcam" if mode == "webcam" else "slot"
+        mode_badge.configure(
+            text=label.upper(),
+            bg=THEME["webcam"] if mode == "webcam" else THEME["slot"],
+        )
+        refresh_button_styles()
         status.set(f"Select {label}: drag a rectangle on the stream frame.")
 
     def update_time_label(value: float | None = None) -> None:
@@ -146,7 +259,7 @@ def select_layout_crops(
             status.set(str(exc))
 
     def current_color() -> str:
-        return "#00d15d" if state["mode"] == "webcam" else "#ff4d5f"
+        return THEME["webcam"] if state["mode"] == "webcam" else THEME["slot"]
 
     def clamp_display(x: int, y: int) -> tuple[int, int]:
         return max(0, min(display_w, x)), max(0, min(display_h, y))
@@ -173,11 +286,11 @@ def select_layout_crops(
     def redraw() -> None:
         canvas.delete("selection")
         if state["slot"] is not None:
-            canvas.create_rectangle(*source_to_display(state["slot"]), outline="#ff4d5f", width=3, tags="selection")
+            canvas.create_rectangle(*source_to_display(state["slot"]), outline=THEME["slot"], width=4, tags="selection")
         if state["webcam"] is not None:
-            canvas.create_rectangle(*source_to_display(state["webcam"]), outline="#00d15d", width=3, tags="selection")
+            canvas.create_rectangle(*source_to_display(state["webcam"]), outline=THEME["webcam"], width=4, tags="selection")
         if state["drag_rect"] is not None:
-            canvas.create_rectangle(*state["drag_rect"], outline=current_color(), width=2, dash=(8, 4), tags="selection")
+            canvas.create_rectangle(*state["drag_rect"], outline=current_color(), width=3, dash=(8, 4), tags="selection")
 
     def on_press(event) -> None:
         x, y = clamp_display(event.x, event.y)
@@ -224,9 +337,36 @@ def select_layout_crops(
         )
         root.destroy()
 
-    tk.Button(toolbar, text="Select webcam", command=lambda: set_mode("webcam"), width=18).pack(side=tk.LEFT, padx=(0, 6))
-    tk.Button(toolbar, text="Select slot", command=lambda: set_mode("slot"), width=18).pack(side=tk.LEFT, padx=(0, 6))
-    tk.Button(toolbar, text="Apply", command=on_apply, width=14).pack(side=tk.RIGHT)
+    webcam_button = styled_button(
+        toolbar,
+        "Select webcam",
+        THEME["webcam"],
+        THEME["webcam_active"],
+        lambda: set_mode("webcam"),
+        18,
+    )
+    webcam_button.pack(side=tk.LEFT, padx=(8, 6), pady=8)
+    slot_button = styled_button(
+        toolbar,
+        "Select slot",
+        THEME["slot"],
+        THEME["slot_active"],
+        lambda: set_mode("slot"),
+        18,
+    )
+    slot_button.pack(side=tk.LEFT, padx=(0, 6), pady=8)
+    apply_button = styled_button(
+        toolbar,
+        "Apply",
+        THEME["apply"],
+        THEME["apply_active"],
+        on_apply,
+        14,
+    )
+    apply_button.configure(fg=THEME["apply_text"], activeforeground=THEME["apply_text"])
+    apply_button.pack(side=tk.RIGHT, padx=(6, 8), pady=8)
+    buttons.update({"webcam": webcam_button, "slot": slot_button})
+    refresh_button_styles()
     time_scale.configure(command=on_time_preview)
 
     canvas.bind("<ButtonPress-1>", on_press)
