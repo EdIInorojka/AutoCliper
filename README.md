@@ -78,6 +78,15 @@ Interactive CMD wizard:
 generate_clips.cmd
 ```
 
+Double-click launcher:
+
+```cmd
+build_launcher_exe.cmd
+StreamCuter.exe
+```
+
+`StreamCuter.exe` is a small launcher for this project folder. It opens the same CMD wizard and still uses `run_local.bat` to activate/install the Python video stack.
+
 Useful feature toggles:
 
 ```cmd

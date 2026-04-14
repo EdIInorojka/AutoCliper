@@ -25,6 +25,7 @@ downloads/
 models/
 tools/
 rollback_snapshots/
+StreamCuter.exe
 *.mp4
 *.mkv
 *.wav
