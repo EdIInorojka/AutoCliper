@@ -422,15 +422,32 @@ class TestCTAPause(unittest.TestCase):
         self.assertTrue(len(text) > 0)
 
     def test_pick_cta_text_language(self):
-        from app.cta_pause import pick_cta_text
+        from app.cta_pause import effective_cta_language, pick_cta_text
         from app.config import AppConfig
 
         config = AppConfig()
         config.variation.enabled = False
         config.cta.language = "ru"
         self.assertEqual(pick_cta_text(config), "ИГРА В ОПИСАНИИ")
+        self.assertEqual(effective_cta_language(config), "ru")
         config.cta.language = "en"
         self.assertEqual(pick_cta_text(config), "THE GAME IN BIO")
+        self.assertEqual(effective_cta_language(config), "en")
+
+    def test_pick_cta_text_follows_selected_subtitle_language_when_cta_auto(self):
+        from app.cta_pause import effective_cta_language, pick_cta_text
+        from app.config import AppConfig
+
+        config = AppConfig()
+        config.variation.enabled = False
+        config.cta.language = "auto"
+        config.language = "en"
+        self.assertEqual(effective_cta_language(config), "en")
+        self.assertEqual(pick_cta_text(config), "THE GAME IN BIO")
+
+        config.language = "ru"
+        self.assertEqual(effective_cta_language(config), "ru")
+        self.assertEqual(pick_cta_text(config), "ИГРА В ОПИСАНИИ")
 
     def test_pick_cta_text_custom_mode(self):
         from app.cta_pause import pick_cta_text

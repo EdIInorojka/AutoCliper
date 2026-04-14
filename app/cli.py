@@ -130,6 +130,8 @@ def cli_entry():
     subtitle_lang = args.subtitle_lang or args.lang
     if subtitle_lang:
         config.language = subtitle_lang
+        if not args.cta_lang and (config.cta.language or "auto").lower() == "auto":
+            config.cta.language = subtitle_lang
     if args.cta_lang:
         config.cta.language = args.cta_lang
     if args.cta_text_mode:
@@ -198,10 +200,14 @@ def cli_entry():
         console.print(f"Layout debug preview: {config.layout_debug_preview}")
         console.print(f"Layout selection save path: {config.layout_preview_save_path}")
         console.print(f"Music: {config.music.enabled}")
+        from app.cta_pause import effective_cta_language, pick_cta_text
+
         console.print(
             f"CTA: {config.cta.enabled} "
-            f"(language={config.cta.language}, text_mode={config.cta.text_mode})"
+            f"(language={config.cta.language}, effective_language={effective_cta_language(config)}, "
+            f"text_mode={config.cta.text_mode})"
         )
+        console.print(f"CTA effective text: {pick_cta_text(config) if config.cta.enabled else 'disabled'}")
         console.print(f"CTA custom text: {config.cta.custom_text or 'none'}")
         console.print(f"CTA text file: {config.cta.text_file_path or 'language default'}")
         console.print(f"CTA voice: {config.cta.voice_mp3_path or 'none'}")

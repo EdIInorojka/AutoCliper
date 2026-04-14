@@ -99,12 +99,16 @@ def _drawtext_font_option(config: AppConfig) -> str:
     return f"fontfile='{font}':"
 
 
-def _cta_language(config: AppConfig) -> str:
+def effective_cta_language(config: AppConfig) -> str:
     cta_lang = (getattr(config.cta, "language", "auto") or "auto").lower()
     if cta_lang in {"ru", "en"}:
         return cta_lang
     language = (config.language or "auto").lower()
     return language if language in {"ru", "en"} else "en"
+
+
+def _cta_language(config: AppConfig) -> str:
+    return effective_cta_language(config)
 
 
 def pick_cta_text(config: AppConfig) -> str:
