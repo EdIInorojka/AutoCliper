@@ -22,6 +22,8 @@ venv/
 output/
 temp/
 downloads/
+cache/
+layout_dataset/
 models/
 tools/
 rollback_snapshots/

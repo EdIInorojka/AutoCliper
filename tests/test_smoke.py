@@ -33,8 +33,18 @@ class TestConfig(unittest.TestCase):
         self.assertIsNone(config.manual_slot_crop)
         self.assertFalse(config.layout_preview_enabled)
         self.assertIsNone(config.layout_preview_time_sec)
+        self.assertTrue(config.layout_preview_autofill)
         self.assertEqual(config.layout_debug_preview, "layout_debug_preview.jpg")
         self.assertEqual(config.layout_preview_save_path, "layout_selection.json")
+        self.assertTrue(config.layout_annotation_dataset_enabled)
+        self.assertEqual(config.layout_annotation_dataset_path, "layout_dataset/annotations.jsonl")
+        self.assertTrue(config.cache.enabled)
+        self.assertEqual(config.cache.dir, "cache")
+        self.assertTrue(config.quick_preview.only)
+        self.assertFalse(config.quick_preview.enabled)
+        self.assertEqual(config.export.render_preset, "balanced")
+        self.assertTrue(config.render_resume_enabled)
+        self.assertEqual(config.highlight_report_path, "highlight_report.json")
         self.assertEqual(
             config.variation.cta_text_variants,
             [
@@ -181,6 +191,42 @@ class TestLayoutSelector(unittest.TestCase):
         self.assertEqual(config.manual_slot_crop, [100, 50, 500, 280])
         self.assertEqual(config.webcam_detection, "off")
         self.assertEqual(config.subtitles_position, "slot_top")
+
+    def test_save_selection_appends_dataset(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, save_layout_selection
+
+        with tempfile.TemporaryDirectory() as td:
+            config = AppConfig(output_dir=td)
+            config.layout_preview_save_path = "layout_selection.json"
+            config.layout_annotation_dataset_path = str(Path(td) / "annotations.jsonl")
+            selection = LayoutSelection(
+                webcam_crop=(10, 20, 300, 168),
+                slot_crop=(400, 120, 1200, 700),
+                source_size=(1920, 1080),
+                preview_time_sec=120.0,
+            )
+
+            save_layout_selection(config, selection, "manual_split", video_path="video.mp4")
+
+            dataset = Path(config.layout_annotation_dataset_path)
+            self.assertTrue(dataset.exists())
+            self.assertIn("manual_split", dataset.read_text(encoding="utf-8"))
+
+    def test_preview_autofill_helpers_read_detection_results(self):
+        from app.layout_selector import _crop_from_content_result, _crop_from_webcam_result
+        from app.content_detector import ContentDetectionResult
+        from app.webcam_types import WebcamDetectionResult, WebcamRegion
+
+        webcam = WebcamDetectionResult(
+            has_webcam=True,
+            region=WebcamRegion(10, 20, 300, 168, 0.9),
+            confidence=0.9,
+        )
+        content = ContentDetectionResult(True, (400, 120, 1200, 700), 0.8, "test")
+
+        self.assertEqual(_crop_from_webcam_result(webcam), (10, 20, 300, 168))
+        self.assertEqual(_crop_from_content_result(content), (400, 120, 1200, 700))
 
 
 class TestSubtitles(unittest.TestCase):
@@ -489,6 +535,21 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("22", args)
         self.assertIn("slow", args)
 
+    def test_video_encode_args_presets(self):
+        from app.renderer import _video_encode_args
+        from app.config import AppConfig
+
+        config = AppConfig()
+        config.export.render_preset = "fast"
+        fast_args = _video_encode_args(config)
+        self.assertIn("veryfast", fast_args)
+        self.assertIn("23", fast_args)
+
+        config.export.render_preset = "nvenc_fast"
+        nvenc_args = _video_encode_args(config)
+        self.assertIn("h264_nvenc", nvenc_args)
+        self.assertIn("-cq", nvenc_args)
+
     def test_cta_freeze_duration_prefers_voice_duration(self):
         from app.renderer import _cta_freeze_duration
         from app.config import AppConfig
@@ -511,6 +572,47 @@ class TestASR(unittest.TestCase):
         self.assertEqual(path.name, "whisper")
         self.assertEqual(path.parent.name, "models")
         self.assertNotIn("temp", path.parts)
+
+
+class TestCache(unittest.TestCase):
+    def test_json_cache_roundtrip(self):
+        from app.cache import load_json_cache, save_json_cache
+        from app.config import AppConfig
+
+        with tempfile.TemporaryDirectory() as td:
+            video = Path(td) / "video.mp4"
+            video.write_bytes(b"fake")
+            config = AppConfig()
+            config.cache.dir = str(Path(td) / "cache")
+
+            save_json_cache(config, "asr", video, {"words": [{"word": "ok"}]}, {"lang": "en"})
+            cached = load_json_cache(config, "asr", video, {"lang": "en"})
+
+            self.assertEqual(cached["words"][0]["word"], "ok")
+
+
+class TestLayoutDataset(unittest.TestCase):
+    def test_scaled_layout_crops(self):
+        from app.config import AppConfig
+        from app.layout_dataset import append_layout_annotation, load_scaled_layout_crops
+
+        with tempfile.TemporaryDirectory() as td:
+            config = AppConfig()
+            config.layout_annotation_dataset_path = str(Path(td) / "annotations.jsonl")
+            append_layout_annotation(
+                config,
+                mode="manual_split",
+                source_size=(1000, 500),
+                preview_time_sec=10.0,
+                webcam_crop=(800, 0, 200, 100),
+                slot_crop=(100, 50, 700, 350),
+                video_path="video.mp4",
+            )
+
+            rows = load_scaled_layout_crops(config, 2000, 1000)
+
+            self.assertEqual(rows[0]["webcam_crop"], (1600, 0, 400, 200))
+            self.assertEqual(rows[0]["slot_crop"], (200, 100, 1400, 700))
 
 
 class TestWebcamDetector(unittest.TestCase):
@@ -896,6 +998,25 @@ class TestHighlightDetector(unittest.TestCase):
         self.assertEqual(len(filled), 3)
         self.assertEqual(filled[1].start_sec, 100)
         self.assertEqual(filled[2].start_sec, 200)
+
+    def test_highlight_report_writes_reasons(self):
+        from app.highlight_detector import HighlightSegment, write_highlight_report
+        from app.config import AppConfig
+        from app.probe import VideoInfo
+
+        with tempfile.TemporaryDirectory() as td:
+            config = AppConfig(output_dir=td, clips_override=1)
+            info = VideoInfo("video.mp4", 60, 30, 1280, 720, [])
+            write_highlight_report(
+                info,
+                [HighlightSegment(1, 11, 0.75, ["audio_energy"], "scored")],
+                config,
+            )
+
+            report = Path(td) / "highlight_report.json"
+            self.assertTrue(report.exists())
+            text = report.read_text(encoding="utf-8")
+            self.assertIn("audio_energy", text)
 
 
 class TestDownloader(unittest.TestCase):

@@ -37,6 +37,21 @@ def run_asr(
 
     Each dict: {"word": str, "start": float, "end": float}
     """
+    from app.cache import load_json_cache, save_json_cache
+
+    cache_extra = {
+        "language": config.language,
+        "env_model": os.environ.get("STREAMCUTER_WHISPER_MODEL", "").strip(),
+        "word_timestamps": True,
+        "vad": True,
+        "version": 2,
+    }
+    cached = load_json_cache(config, "asr", video_path, cache_extra)
+    if cached and isinstance(cached.get("words"), list):
+        words = cached["words"]
+        console.print(f"[green]ASR cache hit: {len(words)} words[/green]")
+        return words
+
     console.print("[cyan]Running ASR on video audio...[/cyan]")
 
     audio_wav = os.path.join(temp_dir, "asr_audio.wav")
@@ -129,14 +144,30 @@ def run_asr(
         ) as progress:
             task = progress.add_task("Transcribing...", total=None)
             try:
-                return _transcribe_words(model, audio_wav, lang, progress, task)
+                words = _transcribe_words(model, audio_wav, lang, progress, task)
+                save_json_cache(
+                    config,
+                    "asr",
+                    video_path,
+                    {"language": lang, "model": model_size, "words": words},
+                    cache_extra,
+                )
+                return words
             except Exception as e:
                 progress.remove_task(task)
                 console.print(f"[yellow]ASR transcription failed: {e}[/yellow]")
                 console.print("[dim]Continuing without subtitles[/dim]")
                 return []
     try:
-        return _transcribe_words(model, audio_wav, lang, None, None)
+        words = _transcribe_words(model, audio_wav, lang, None, None)
+        save_json_cache(
+            config,
+            "asr",
+            video_path,
+            {"language": lang, "model": model_size, "words": words},
+            cache_extra,
+        )
+        return words
     except Exception as e:
         console.print(f"[yellow]ASR transcription failed: {e}[/yellow]")
         console.print("[dim]Continuing without subtitles[/dim]")

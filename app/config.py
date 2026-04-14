@@ -10,6 +10,7 @@ from typing import Any, List, Optional
 
 @dataclass
 class ExportConfig:
+    render_preset: str = "balanced"
     width: int = 1080
     height: int = 1920
     fps: int = 30
@@ -19,6 +20,25 @@ class ExportConfig:
     preset: str = "slow"
     audio_codec: str = "aac"
     audio_bitrate: str = "192k"
+
+
+@dataclass
+class CacheConfig:
+    enabled: bool = True
+    dir: str = "cache"
+    asr: bool = True
+    highlights: bool = True
+    layout: bool = True
+
+
+@dataclass
+class QuickPreviewConfig:
+    enabled: bool = False
+    only: bool = True
+    duration_sec: float = 10.0
+    width: int = 720
+    height: int = 1280
+    output_dir: str = "output/preview"
 
 
 @dataclass
@@ -132,8 +152,11 @@ class AppConfig:
     manual_slot_crop: Optional[List[int]] = None
     layout_preview_enabled: bool = False
     layout_preview_time_sec: Optional[float] = None
+    layout_preview_autofill: bool = True
     layout_debug_preview: str = "layout_debug_preview.jpg"
     layout_preview_save_path: str = "layout_selection.json"
+    layout_annotation_dataset_enabled: bool = True
+    layout_annotation_dataset_path: str = "layout_dataset/annotations.jsonl"
     webcam_top_ratio: float = 0.33
     content_bottom_ratio: float = 0.67
     highlight_target_count_per_hour: int = 15
@@ -143,8 +166,12 @@ class AppConfig:
     hard_max_clip_duration_sec: int = 75
     cta: CTAConfig = field(default_factory=CTAConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
+    cache: CacheConfig = field(default_factory=CacheConfig)
+    quick_preview: QuickPreviewConfig = field(default_factory=QuickPreviewConfig)
     cleanup_temp_files: bool = True
     delete_input_after_success: bool = False
+    render_resume_enabled: bool = True
+    highlight_report_path: str = "highlight_report.json"
     export: ExportConfig = field(default_factory=ExportConfig)
     variation: VariationConfig = field(default_factory=VariationConfig)
     bot_preset_fields: BotPresetFields = field(default_factory=BotPresetFields)
@@ -171,6 +198,10 @@ def app_config_from_dict(data: Optional[dict]) -> AppConfig:
     nested = {
         "cta": _merge_dataclass(CTAConfig, data.pop("cta", None)),
         "music": _merge_dataclass(MusicConfig, data.pop("music", None)),
+        "cache": _merge_dataclass(CacheConfig, data.pop("cache", None)),
+        "quick_preview": _merge_dataclass(
+            QuickPreviewConfig, data.pop("quick_preview", None)
+        ),
         "export": _merge_dataclass(ExportConfig, data.pop("export", None)),
         "variation": _merge_dataclass(VariationConfig, data.pop("variation", None)),
         "bot_preset_fields": _merge_dataclass(

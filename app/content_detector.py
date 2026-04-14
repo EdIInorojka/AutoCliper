@@ -102,7 +102,7 @@ def detect_content_area(
 
     activity = _activity_map(cv2, np, frames)
     frame_rects = _frame_content_candidates(cv2, np, frames)
-    candidates = _content_candidates(src_w, src_h, webcam_crop, activity, frame_rects)
+    candidates = _content_candidates(src_w, src_h, webcam_crop, activity, frame_rects, config)
     if not candidates:
         return ContentDetectionResult(True, fallback_crop, 0.35, fallback_reason)
 
@@ -120,6 +120,8 @@ def detect_content_area(
             score += 0.12
         elif reason.startswith("frame_rect_"):
             score += 0.22
+        elif reason.startswith("dataset_"):
+            score += 0.18
         if score > best_score:
             best_score = score
             best_crop = crop
@@ -209,6 +211,7 @@ def _content_candidates(
     webcam_crop: Optional[tuple[int, int, int, int]],
     activity: Any | None = None,
     frame_rects: Optional[list[tuple[tuple[float, float, float, float], str]]] = None,
+    config: AppConfig | None = None,
 ) -> list[tuple[tuple[int, int, int, int], str]]:
     crops: list[tuple[tuple[int, int, int, int], str]] = []
 
@@ -233,6 +236,8 @@ def _content_candidates(
         add(*crop, reason)
     for crop, reason in frame_rects or []:
         add(*crop, reason)
+    for crop, reason in _dataset_content_candidates(src_w, src_h, config):
+        add(*crop, reason)
     for crop, reason in _profile_content_candidates(src_w, src_h, webcam_crop):
         add(*crop, reason)
 
@@ -243,6 +248,25 @@ def _content_candidates(
             seen.add(crop)
             unique.append((crop, reason))
     return unique
+
+
+def _dataset_content_candidates(
+    src_w: int,
+    src_h: int,
+    config: AppConfig | None,
+) -> list[tuple[tuple[float, float, float, float], str]]:
+    if config is None:
+        return []
+    try:
+        from app.layout_dataset import load_scaled_layout_crops
+    except ImportError:
+        return []
+    candidates = []
+    for idx, row in enumerate(load_scaled_layout_crops(config, src_w, src_h)):
+        crop = row.get("slot_crop")
+        if crop:
+            candidates.append((crop, f"dataset_slot_{idx}"))
+    return candidates
 
 
 def _frame_content_candidates(

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from app.utils.console import get_console
@@ -28,6 +30,8 @@ class HighlightSegment:
     start_sec: float
     end_sec: float
     score: float
+    reasons: list[str] = field(default_factory=list)
+    source: str = "scored"
 
 
 def _extract_audio_wav(video_path: str, temp_dir: str) -> str:
@@ -89,17 +93,31 @@ def find_highlights(
 
     Returns top-N segments sorted by score.
     """
+    from app.cache import load_json_cache, save_json_cache
+
+    cache_extra = _highlight_cache_extra(video_info, config, asr_words)
+    cached = load_json_cache(config, "highlights", video_path, cache_extra)
+    if cached and isinstance(cached.get("segments"), list):
+        segments = [_segment_from_dict(item) for item in cached["segments"]]
+        if segments:
+            console.print(f"[green]Highlight cache hit: {len(segments)} segments[/green]")
+            return segments
+
     console.print("[cyan]Extracting audio for highlight analysis...[/cyan]")
 
     try:
         audio_path = _extract_audio_wav(video_path, temp_dir)
     except Exception as e:
         console.print(f"[yellow]Audio extraction failed, using fallback highlights: {e}[/yellow]")
-        return _fallback_highlights(video_info, config)
+        segments = _fallback_highlights(video_info, config)
+        _save_highlight_cache(config, video_path, cache_extra, segments)
+        return segments
 
     if not os.path.exists(audio_path):
         console.print("[yellow]Audio extraction failed, using fallback highlights[/yellow]")
-        return _fallback_highlights(video_info, config)
+        segments = _fallback_highlights(video_info, config)
+        _save_highlight_cache(config, video_path, cache_extra, segments)
+        return segments
 
     console.print("[cyan]Computing audio features...[/cyan]")
 
@@ -107,14 +125,18 @@ def find_highlights(
         import numpy as np
     except ImportError:
         console.print("[yellow]numpy not installed; using fallback highlights[/yellow]")
-        return _fallback_highlights(video_info, config)
+        segments = _fallback_highlights(video_info, config)
+        _save_highlight_cache(config, video_path, cache_extra, segments)
+        return segments
 
     try:
         import librosa  # noqa: F401
         from scipy.ndimage import uniform_filter1d
     except ImportError:
         console.print("[yellow]librosa/scipy not installed; using fallback highlights[/yellow]")
-        return _fallback_highlights(video_info, config)
+        segments = _fallback_highlights(video_info, config)
+        _save_highlight_cache(config, video_path, cache_extra, segments)
+        return segments
 
     rms, sr = compute_audio_energy(audio_path)
     centroid = compute_spectral_centroid(audio_path)
@@ -219,13 +241,17 @@ def find_highlights(
     # Deduplicate: remove overlapping candidates, keep higher score
     if not candidates:
         console.print("[yellow]No strong peaks found, using fallback highlights[/yellow]")
-        return _fallback_highlights(video_info, config)
+        segments = _fallback_highlights(video_info, config)
+        _save_highlight_cache(config, video_path, cache_extra, segments)
+        return segments
 
     candidates.sort(key=lambda c: c.score, reverse=True)
     segments = _deduplicate(candidates, min_gap=2.0)
     if not segments:
         console.print("[yellow]All candidates overlapped, using fallback highlights[/yellow]")
-        return _fallback_highlights(video_info, config)
+        segments = _fallback_highlights(video_info, config)
+        _save_highlight_cache(config, video_path, cache_extra, segments)
+        return segments
 
     # Limit to target count. If the user asks for more clips than strong
     # highlights found, fill the remainder with non-overlapping fallback windows.
@@ -248,7 +274,98 @@ def find_highlights(
             )
 
     console.print(f"[green]Found {len(segments)} highlight segments[/green]")
+    _save_highlight_cache(config, video_path, cache_extra, segments)
     return segments
+
+
+def write_highlight_report(
+    video_info: VideoInfo,
+    segments: list[HighlightSegment],
+    config: AppConfig,
+) -> Optional[Path]:
+    """Write a JSON report explaining selected highlight windows."""
+    report_name = getattr(config, "highlight_report_path", "") or "highlight_report.json"
+    out_path = Path(report_name)
+    if not out_path.is_absolute():
+        out_path = Path(config.output_dir) / out_path
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "video": {
+            "path": video_info.path,
+            "duration_sec": video_info.duration_sec,
+            "fps": video_info.fps,
+            "width": video_info.width,
+            "height": video_info.height,
+        },
+        "target_count": _target_count(video_info, config),
+        "segments": [_segment_to_dict(segment, index=i + 1) for i, segment in enumerate(segments)],
+    }
+    out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(f"[cyan]Highlight report: {out_path}[/cyan]")
+    return out_path
+
+
+def _highlight_cache_extra(
+    video_info: VideoInfo,
+    config: AppConfig,
+    asr_words: Optional[list[dict]],
+) -> dict[str, Any]:
+    return {
+        "version": 2,
+        "duration": round(float(video_info.duration_sec or 0.0), 3),
+        "clips": config.clips_override,
+        "target_per_hour": config.highlight_target_count_per_hour,
+        "min": config.min_clip_duration_sec,
+        "preferred": config.preferred_clip_duration_sec,
+        "max": config.max_clip_duration_sec,
+        "hard_max": config.hard_max_clip_duration_sec,
+        "asr_words": len(asr_words or []),
+        "asr_first": (asr_words or [{}])[0].get("word") if asr_words else "",
+        "asr_last": (asr_words or [{}])[-1].get("word") if asr_words else "",
+    }
+
+
+def _save_highlight_cache(
+    config: AppConfig,
+    video_path: str,
+    cache_extra: dict[str, Any],
+    segments: list[HighlightSegment],
+) -> None:
+    from app.cache import save_json_cache
+
+    save_json_cache(
+        config,
+        "highlights",
+        video_path,
+        {"segments": [_segment_to_dict(segment) for segment in segments]},
+        cache_extra,
+    )
+
+
+def _segment_to_dict(segment: HighlightSegment, index: Optional[int] = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "start_sec": round(float(segment.start_sec), 3),
+        "end_sec": round(float(segment.end_sec), 3),
+        "duration_sec": round(float(segment.end_sec - segment.start_sec), 3),
+        "score": round(float(segment.score), 6),
+        "reasons": list(getattr(segment, "reasons", []) or []),
+        "source": getattr(segment, "source", "scored"),
+    }
+    if index is not None:
+        payload["index"] = index
+    return payload
+
+
+def _segment_from_dict(item: Any) -> HighlightSegment:
+    if not isinstance(item, dict):
+        return HighlightSegment(0.0, 0.0, 0.0, [], "cache_invalid")
+    return HighlightSegment(
+        start_sec=float(item.get("start_sec", 0.0)),
+        end_sec=float(item.get("end_sec", 0.0)),
+        score=float(item.get("score", 0.0)),
+        reasons=list(item.get("reasons") or []),
+        source=str(item.get("source") or "cache"),
+    )
 
 
 def _target_count(video_info: VideoInfo, config: AppConfig) -> int:
@@ -311,6 +428,8 @@ def _deduplicate(
                 start_sec=c.start_sec,
                 end_sec=c.end_sec,
                 score=c.score,
+                reasons=c.reasons,
+                source="scored",
             ))
     return selected
 
@@ -374,7 +493,17 @@ def _fallback_highlights(
                 start_sec=start,
                 end_sec=end,
                 score=0.5,
+                reasons=["fallback_even_spacing"],
+                source="fallback",
             ))
     if not segments and duration > 0:
-        segments.append(HighlightSegment(start_sec=0.0, end_sec=duration, score=0.25))
+        segments.append(
+            HighlightSegment(
+                start_sec=0.0,
+                end_sec=duration,
+                score=0.25,
+                reasons=["fallback_full_video"],
+                source="fallback",
+            )
+        )
     return segments

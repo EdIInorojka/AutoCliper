@@ -243,6 +243,7 @@ def detect_webcam(video_path: str, config: AppConfig | None = None) -> WebcamDet
 
     edge_margin_ratio = float(getattr(config, "webcam_edge_margin_ratio", 0.15) or 0.15)
     webcam_candidates = _generate_webcam_candidates(w, h, edge_margin_ratio=edge_margin_ratio)
+    webcam_candidates = _add_dataset_webcam_candidates(webcam_candidates, w, h, config)
 
     for roi in webcam_candidates:
         rx, ry, rw, rh = roi
@@ -289,6 +290,28 @@ def detect_webcam(video_path: str, config: AppConfig | None = None) -> WebcamDet
 
     console.print(f"[yellow]No webcam overlay detected (best score: {best_score:.2f})[/yellow]")
     return WebcamDetectionResult(has_webcam=False, confidence=confidence)
+
+
+def _add_dataset_webcam_candidates(
+    candidates: list[tuple[int, int, int, int]],
+    frame_w: int,
+    frame_h: int,
+    config: AppConfig | None,
+) -> list[tuple[int, int, int, int]]:
+    if config is None:
+        return candidates
+    try:
+        from app.layout_dataset import load_scaled_layout_crops
+    except ImportError:
+        return candidates
+    seen = set(candidates)
+    out = candidates[:]
+    for row in load_scaled_layout_crops(config, frame_w, frame_h):
+        crop = row.get("webcam_crop")
+        if crop and crop not in seen:
+            seen.add(crop)
+            out.append(crop)
+    return out
 
 
 def _score_webcam_candidate(

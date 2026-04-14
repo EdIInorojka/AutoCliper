@@ -32,8 +32,11 @@ manual_webcam_crop:
 manual_slot_crop:
 layout_preview_enabled: false
 layout_preview_time_sec:
+layout_preview_autofill: true
 layout_debug_preview: "layout_debug_preview.jpg"
 layout_preview_save_path: "layout_selection.json"
+layout_annotation_dataset_enabled: true
+layout_annotation_dataset_path: "layout_dataset/annotations.jsonl"
 webcam_top_ratio: 0.33
 content_bottom_ratio: 0.67
 
@@ -80,12 +83,32 @@ music:
   volume_max: 0.20
   duck_under_speech: true
 
+# Persistent caches for expensive analysis
+cache:
+  enabled: true
+  dir: "cache"
+  asr: true
+  highlights: true
+  layout: true
+
+# Quick preview render (one short 720x1280 clip)
+quick_preview:
+  enabled: false
+  only: true
+  duration_sec: 10.0
+  width: 720
+  height: 1280
+  output_dir: "output/preview"
+
 # Cleanup
 cleanup_temp_files: true
 delete_input_after_success: false
+render_resume_enabled: true
+highlight_report_path: "highlight_report.json"
 
 # Export settings
 export:
+  render_preset: "balanced"  # fast | balanced | quality | small | nvenc_fast | custom
   width: 1080
   height: 1920
   fps: 30

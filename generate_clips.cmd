@@ -65,7 +65,30 @@ set /p "SC_CLIPS=6. Количество клипов (Enter = 5): "
 if not defined SC_CLIPS set "SC_CLIPS=5"
 
 echo.
-echo 7. Открыть окно выбора вебки/слота?
+echo 7. Качество рендера:
+echo    [1] Баланс
+echo    [2] Быстро
+echo    [3] Максимальное качество
+echo    [4] Маленький размер
+echo    [5] Быстро через NVIDIA
+choice /C 12345 /N /M "Выбор: "
+set "SC_RENDER_PRESET=balanced"
+if errorlevel 5 set "SC_RENDER_PRESET=nvenc_fast"
+if errorlevel 4 if not errorlevel 5 set "SC_RENDER_PRESET=small"
+if errorlevel 3 if not errorlevel 4 set "SC_RENDER_PRESET=quality"
+if errorlevel 2 if not errorlevel 3 set "SC_RENDER_PRESET=fast"
+set "SC_RENDER_ARGS=--render-preset %SC_RENDER_PRESET%"
+
+echo.
+echo 8. Сделать только быстрый предпросмотр одного клипа?
+echo    [1] Да
+echo    [2] Нет, сразу полная генерация
+choice /C 12 /N /M "Выбор: "
+set "SC_QUICK_PREVIEW=--quick-preview"
+if errorlevel 2 set "SC_QUICK_PREVIEW="
+
+echo.
+echo 9. Открыть окно выбора вебки/слота?
 echo    [1] Да
 echo    [2] Нет, использовать авторазметку
 choice /C 12 /N /M "Выбор: "
@@ -77,7 +100,7 @@ if defined SC_PREVIEW (
 )
 
 echo.
-echo 8. Удалить исходное видео после успешной генерации?
+echo 10. Удалить исходное видео после успешной генерации?
 echo    [1] Да
 echo    [2] Нет
 choice /C 12 /N /M "Выбор: "
@@ -98,6 +121,12 @@ if "%SC_CTA_FLAG%"=="--cta-text" (
 echo Озвучка CTA:  %SC_VOICE%
 echo Папка:        %SC_OUT%
 echo Клипов:       %SC_CLIPS%
+echo Рендер:       %SC_RENDER_PRESET%
+if defined SC_QUICK_PREVIEW (
+    echo Быстрый preview: да
+) else (
+    echo Быстрый preview: нет
+)
 if defined SC_PREVIEW (
     echo Разметка UI:   да
     if defined SC_PREVIEW_TIME echo Кадр UI:      %SC_PREVIEW_TIME%
@@ -116,15 +145,15 @@ echo.
 
 if defined SC_VOICE (
     if defined SC_PREVIEW_TIME (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% %SC_RENDER_ARGS% %SC_QUICK_PREVIEW% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
     ) else (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% %SC_RENDER_ARGS% %SC_QUICK_PREVIEW% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
     )
 ) else (
     if defined SC_PREVIEW_TIME (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% %SC_RENDER_ARGS% %SC_QUICK_PREVIEW% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
     ) else (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% %SC_RENDER_ARGS% %SC_QUICK_PREVIEW% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
     )
 )
 

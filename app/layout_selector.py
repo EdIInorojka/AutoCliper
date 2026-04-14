@@ -44,6 +44,8 @@ def select_layout_crops(
     video_path: str,
     video_info: VideoInfo,
     config: AppConfig,
+    auto_webcam_result=None,
+    auto_content_result=None,
 ) -> Optional[LayoutSelection]:
     """
     Open a minimal preview window and return selected webcam/slot crops.
@@ -85,8 +87,8 @@ def select_layout_crops(
 
     state = {
         "mode": "webcam",
-        "webcam": None,
-        "slot": None,
+        "webcam": _crop_from_webcam_result(auto_webcam_result),
+        "slot": _crop_from_content_result(auto_content_result),
         "drag_start": None,
         "drag_rect": None,
         "result": None,
@@ -166,7 +168,11 @@ def select_layout_crops(
     time_scale.set(preview_time_sec)
     time_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-    status = tk.StringVar(value="Select webcam, drag on the frame, then Apply.")
+    if state["webcam"] is not None or state["slot"] is not None:
+        status_text = "Auto boxes are preselected. Fix them by dragging, or Apply."
+    else:
+        status_text = "Select webcam, drag on the frame, then Apply."
+    status = tk.StringVar(value=status_text)
     status_label = tk.Label(
         shell,
         textvariable=status,
@@ -239,14 +245,24 @@ def select_layout_crops(
         time_scale.set(actual_time)
         update_time_label(actual_time)
         if clear_selection:
-            state["webcam"] = None
-            state["slot"] = None
+            if getattr(config, "layout_preview_autofill", True):
+                state["webcam"] = _crop_from_webcam_result(auto_webcam_result)
+                state["slot"] = _crop_from_content_result(auto_content_result)
+            else:
+                state["webcam"] = None
+                state["slot"] = None
             state["drag_start"] = None
             state["drag_rect"] = None
-            status.set(
-                f"Frame changed to {_fmt_timestamp(actual_time)}. "
-                "Selections cleared; mark webcam or slot on this frame."
-            )
+            if state["webcam"] is not None or state["slot"] is not None:
+                status.set(
+                    f"Frame changed to {_fmt_timestamp(actual_time)}. "
+                    "Auto boxes reapplied; fix them if needed."
+                )
+            else:
+                status.set(
+                    f"Frame changed to {_fmt_timestamp(actual_time)}. "
+                    "Selections cleared; mark webcam or slot on this frame."
+                )
         redraw()
 
     def on_time_preview(value: str) -> None:
@@ -368,6 +384,7 @@ def select_layout_crops(
     buttons.update({"webcam": webcam_button, "slot": slot_button})
     refresh_button_styles()
     time_scale.configure(command=on_time_preview)
+    redraw()
 
     canvas.bind("<ButtonPress-1>", on_press)
     canvas.bind("<B1-Motion>", on_drag)
@@ -410,6 +427,7 @@ def save_layout_selection(
     config: AppConfig,
     selection: LayoutSelection,
     mode: str,
+    video_path: str = "",
 ) -> Optional[Path]:
     out_name = config.layout_preview_save_path or "layout_selection.json"
     out_path = Path(out_name)
@@ -428,7 +446,42 @@ def save_layout_selection(
         "subtitles_position": config.subtitles_position,
     }
     out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        from app.layout_dataset import append_layout_annotation
+
+        dataset_path = append_layout_annotation(
+            config,
+            mode=mode,
+            source_size=selection.source_size,
+            preview_time_sec=selection.preview_time_sec,
+            webcam_crop=selection.webcam_crop,
+            slot_crop=selection.slot_crop,
+            video_path=video_path,
+        )
+        if dataset_path is not None:
+            console.print(f"[dim]Layout annotation saved: {dataset_path}[/dim]")
+    except Exception as exc:
+        console.print(f"[yellow]Could not append layout annotation: {exc}[/yellow]")
     return out_path
+
+
+def _crop_from_webcam_result(result) -> Optional[Crop]:
+    if result is None or not getattr(result, "has_webcam", False):
+        return None
+    region = getattr(result, "region", None)
+    if region is None:
+        return None
+    return int(region.x), int(region.y), int(region.w), int(region.h)
+
+
+def _crop_from_content_result(result) -> Optional[Crop]:
+    if result is None or not getattr(result, "has_content", False):
+        return None
+    crop = getattr(result, "crop", None)
+    if not crop:
+        return None
+    x, y, w, h = crop
+    return int(x), int(y), int(w), int(h)
 
 
 def _initial_preview_time(video_info: VideoInfo, config: AppConfig) -> float:

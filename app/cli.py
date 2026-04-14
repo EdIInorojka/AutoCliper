@@ -32,6 +32,25 @@ def cli_entry():
     parser.add_argument("--output-dir", "-o", required=False, help="Output directory")
     parser.add_argument("--temp-dir", "-t", required=False, help="Temp directory")
     parser.add_argument("--clips", "-n", type=int, required=False, help="Number of clips to generate")
+    parser.add_argument(
+        "--render-preset",
+        choices=["fast", "balanced", "quality", "small", "nvenc_fast", "custom"],
+        required=False,
+        help="Render preset: fast, balanced, quality, small, nvenc_fast, or custom",
+    )
+    parser.add_argument(
+        "--quick-preview",
+        action="store_true",
+        help="Render only one short 720p preview clip and exit",
+    )
+    parser.add_argument(
+        "--quick-preview-sec",
+        type=float,
+        required=False,
+        help="Quick preview duration in seconds",
+    )
+    parser.add_argument("--no-cache", action="store_true", help="Disable persistent ASR/highlight/layout cache")
+    parser.add_argument("--force-render", action="store_true", help="Re-render existing output clips instead of resuming")
     parser.add_argument("--lang", "-l", choices=["auto", "ru", "en"], required=False, help="Subtitle/ASR language")
     parser.add_argument("--subtitle-lang", choices=["auto", "ru", "en"], required=False, help="Alias for --lang")
     parser.add_argument("--cta-lang", choices=["auto", "ru", "en"], required=False, help="CTA text language")
@@ -89,10 +108,25 @@ def cli_entry():
         config.input = args.input_path
     if args.output_dir:
         config.output_dir = args.output_dir
+        if config.quick_preview.output_dir == "output/preview":
+            import os
+
+            config.quick_preview.output_dir = os.path.join(args.output_dir, "preview")
     if args.temp_dir:
         config.temp_dir = args.temp_dir
     if args.clips:
         config.clips_override = args.clips
+    if args.render_preset:
+        config.export.render_preset = args.render_preset
+    if args.quick_preview:
+        config.quick_preview.enabled = True
+        config.quick_preview.only = True
+    if args.quick_preview_sec is not None:
+        config.quick_preview.duration_sec = max(1.0, float(args.quick_preview_sec))
+    if args.no_cache:
+        config.cache.enabled = False
+    if args.force_render:
+        config.render_resume_enabled = False
     subtitle_lang = args.subtitle_lang or args.lang
     if subtitle_lang:
         config.language = subtitle_lang
@@ -174,8 +208,20 @@ def cli_entry():
         console.print(f"Delete input after success: {config.delete_input_after_success}")
         console.print(
             f"Export: {config.export.width}x{config.export.height}@{config.export.fps} "
+            f"render_preset={config.export.render_preset} "
             f"codec={config.export.codec} crf={config.export.crf} preset={config.export.preset}"
         )
+        console.print(
+            f"Cache: {config.cache.enabled} "
+            f"(asr={config.cache.asr}, highlights={config.cache.highlights}, layout={config.cache.layout}, dir={config.cache.dir})"
+        )
+        console.print(
+            f"Quick preview: {config.quick_preview.enabled} "
+            f"(only={config.quick_preview.only}, duration={config.quick_preview.duration_sec}s, "
+            f"output={config.quick_preview.output_dir})"
+        )
+        console.print(f"Resume render: {config.render_resume_enabled}")
+        console.print(f"Highlight report: {config.highlight_report_path}")
         console.print(f"Clips override: {config.clips_override}")
         console.print("[cyan]=== END DRY RUN ===[/cyan]")
         return

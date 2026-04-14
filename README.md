@@ -98,6 +98,10 @@ python -m app.main --input "video.mp4" --no-subs
 python -m app.main --input "video.mp4" --subtitle-lang ru --cta-lang ru --cta-voice "sounds\voice\cta.mp3"
 python -m app.main --input "video.mp4" --cta-text "МОЯ НАДПИСЬ"
 python -m app.main --input "video.mp4" --cta-text-file "cta_texts\ru.txt"
+python -m app.main --input "video.mp4" --render-preset balanced
+python -m app.main --input "video.mp4" --quick-preview --quick-preview-sec 10
+python -m app.main --input "video.mp4" --force-render
+python -m app.main --input "video.mp4" --no-cache
 python -m app.main --input "video.mp4" --delete-input-after-success
 python -m app.main --input "video.mp4" --preview-layout
 python -m app.main --input "video.mp4" --preview-layout --preview-time 03:00
@@ -125,15 +129,38 @@ Important fields:
 - `subtitles_enabled`, `subtitles_mode`, `subtitles_position`, `subtitles_theme`, `subtitles_font_name`, `subtitles_font_path`, `subtitles_template_ru`, `subtitles_template_en`.
 - `whisper_model_cache_dir`: persistent faster-whisper model cache; default `models/whisper`.
 - `webcam_detection`, `webcam_edge_margin_ratio`, `manual_webcam_crop`, `manual_slot_crop`, `layout_preview_enabled`, `layout_preview_time_sec`, `layout_debug_preview`, `layout_preview_save_path`, `webcam_top_ratio`, `content_bottom_ratio`.
+- `layout_preview_autofill`: preselect auto-detected webcam/slot boxes in the preview window so you can just fix them if needed.
+- `layout_annotation_dataset_enabled`, `layout_annotation_dataset_path`: saves manual preview selections as JSONL and uses them later as learned layout candidates.
 - `highlight_target_count_per_hour`, `min_clip_duration_sec`, `preferred_clip_duration_sec`, `max_clip_duration_sec`, `hard_max_clip_duration_sec`.
+- `highlight_report_path`: JSON report with selected windows, scores and reasons.
 - `cta.enabled`, `cta.trigger_range_sec`, `cta.freeze_duration_sec`, `cta.text_mode`, `cta.custom_text`, `cta.text_file_path_en`, `cta.text_file_path_ru`, `cta.text_en`, `cta.text_ru`, `cta.language`, `cta.font_path`, `cta.font_size`, `cta.min_font_size`, `cta.max_text_width_ratio`, `cta.max_text_lines`, `cta.voice_mp3_path`.
 - When `cta.voice_mp3_path` points to an existing audio file, the CTA freeze duration follows that file's duration; if the file is missing, `cta.freeze_duration_sec` is used.
 - Default CTA file variants are limited to: `THE GAME IN BIO`, `LINK IN BIO`, `BIO FOR MORE`, `CHECK BIO`, `MORE IN BIO`, `ИГРА В ОПИСАНИИ`, `ССЫЛКА В ОПИСАНИИ`.
 - `music.enabled`, `music.folder`, `music.volume_min`, `music.volume_max`, `music.duck_under_speech`; default `music.enabled` is `false`.
+- `cache.enabled`, `cache.dir`, `cache.asr`, `cache.highlights`, `cache.layout`: persistent cache for repeated runs.
+- `quick_preview.enabled`, `quick_preview.only`, `quick_preview.duration_sec`, `quick_preview.output_dir`: render a short 720x1280 preview clip before doing a full batch.
 - `variation.enabled`, `variation.cta_text_variants`, `variation.cta_text_variants_ru`, `variation.subtitle_style_variants`, `variation.bgm_random_pick`.
-- `cleanup_temp_files`, `delete_input_after_success`.
-- `export.width`, `export.height`, `export.fps`, `export.codec`, `export.crf`, `export.preset`, `export.bitrate`, `export.audio_codec`.
+- `cleanup_temp_files`, `delete_input_after_success`, `render_resume_enabled`.
+- `export.render_preset`, `export.width`, `export.height`, `export.fps`, `export.codec`, `export.crf`, `export.preset`, `export.bitrate`, `export.audio_codec`.
 - `bot_preset_fields` for future Telegram UI options.
+
+## Render Presets
+
+- `fast`: quick local checks, `libx264`, CRF 23, `veryfast`.
+- `balanced`: default, good quality and size, `libx264`, CRF 22, `slow`.
+- `quality`: slower, cleaner output, `libx264`, CRF 19, `slower`.
+- `small`: smaller files, still sane quality, `libx264`, CRF 24, `slow`.
+- `nvenc_fast`: NVIDIA GPU path, `h264_nvenc`, CQ 22. Use it only when your ffmpeg build has NVENC support.
+
+Use `custom` if you want to control `export.codec`, `export.crf`, `export.preset`, and `export.bitrate` directly.
+
+## Cache And Resume
+
+StreamCuter caches expensive ASR, highlight and layout analysis in `cache/`. The cache key includes the source file path, size, mtime and important config values, so repeated runs on the same stream can skip work.
+
+Output rendering has resume enabled by default. Existing valid clips are kept and skipped. Use `--force-render` when you want to overwrite everything.
+
+Manual layout selections are appended to `layout_dataset/annotations.jsonl`. Future auto-detection uses those records as extra candidates, so the detector gradually gets better for layouts you have corrected.
 
 ## Highlight Logic
 

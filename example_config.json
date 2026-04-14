@@ -20,8 +20,11 @@
   "manual_slot_crop": null,
   "layout_preview_enabled": false,
   "layout_preview_time_sec": null,
+  "layout_preview_autofill": true,
   "layout_debug_preview": "layout_debug_preview.jpg",
   "layout_preview_save_path": "layout_selection.json",
+  "layout_annotation_dataset_enabled": true,
+  "layout_annotation_dataset_path": "layout_dataset/annotations.jsonl",
   "webcam_top_ratio": 0.33,
   "content_bottom_ratio": 0.67,
   "highlight_target_count_per_hour": 15,
@@ -63,9 +66,27 @@
     "volume_max": 0.2,
     "duck_under_speech": true
   },
+  "cache": {
+    "enabled": true,
+    "dir": "cache",
+    "asr": true,
+    "highlights": true,
+    "layout": true
+  },
+  "quick_preview": {
+    "enabled": false,
+    "only": true,
+    "duration_sec": 10.0,
+    "width": 720,
+    "height": 1280,
+    "output_dir": "output/preview"
+  },
   "cleanup_temp_files": true,
   "delete_input_after_success": false,
+  "render_resume_enabled": true,
+  "highlight_report_path": "highlight_report.json",
   "export": {
+    "render_preset": "balanced",
     "width": 1080,
     "height": 1920,
     "fps": 30,

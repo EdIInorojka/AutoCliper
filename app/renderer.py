@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import copy
 import random
 import subprocess
 from pathlib import Path
@@ -312,19 +313,37 @@ def _build_filter_chain(
 
 def _video_encode_args(config: AppConfig) -> list[str]:
     """Build video encoder args. CRF mode gives smaller files at near-identical visual quality."""
-    codec = config.export.codec
+    preset_name = (getattr(config.export, "render_preset", "balanced") or "balanced").lower()
+    preset = _render_preset_values(preset_name)
+    codec = preset.get("codec") or config.export.codec
     args = ["-c:v", codec]
     codec_lower = codec.lower()
-    crf = getattr(config.export, "crf", None)
+    crf = preset.get("crf", getattr(config.export, "crf", None))
 
     if crf is not None and codec_lower in {"libx264", "libx265"}:
         args.extend(["-crf", str(int(crf))])
+    elif codec_lower in {"h264_nvenc", "hevc_nvenc"}:
+        cq = preset.get("cq", crf if crf is not None else 22)
+        args.extend(["-rc", "vbr", "-cq", str(int(cq)), "-b:v", "0"])
     elif config.export.bitrate:
         args.extend(["-b:v", config.export.bitrate])
 
-    preset = getattr(config.export, "preset", "fast") or "fast"
-    args.extend(["-preset", preset, "-pix_fmt", "yuv420p"])
+    encoder_preset = preset.get("preset") or getattr(config.export, "preset", "fast") or "fast"
+    args.extend(["-preset", str(encoder_preset), "-pix_fmt", "yuv420p"])
     return args
+
+
+def _render_preset_values(name: str) -> dict:
+    if name == "custom":
+        return {}
+    presets = {
+        "fast": {"codec": "libx264", "crf": 23, "preset": "veryfast"},
+        "balanced": {"codec": "libx264", "crf": 22, "preset": "slow"},
+        "quality": {"codec": "libx264", "crf": 19, "preset": "slower"},
+        "small": {"codec": "libx264", "crf": 24, "preset": "slow"},
+        "nvenc_fast": {"codec": "h264_nvenc", "cq": 22, "preset": "p5"},
+    }
+    return presets.get(name, presets["balanced"])
 
 
 def _cta_freeze_duration(config: AppConfig, voice_duration_sec: Optional[float]) -> float:
@@ -410,6 +429,11 @@ def render_all_clips(
         out_name = safe_filename(f"clip_{i+1}_{fmt_time(segment.start_sec)}_{fmt_time(segment.end_sec)}.mp4")
         out_path = os.path.join(output_dir, out_name)
 
+        if config.render_resume_enabled and _is_existing_output_valid(out_path, segment):
+            console.print(f"[green]Resume: keeping existing clip {Path(out_path).name}[/green]")
+            success_paths.append(out_path)
+            continue
+
         success = render_clip(
             video_path=video_path,
             video_info=video_info,
@@ -427,3 +451,114 @@ def render_all_clips(
 
     console.print(f"\n[green]Successfully rendered {len(success_paths)}/{len(segments)} clips[/green]")
     return success_paths
+
+
+def render_quick_preview(
+    video_path: str,
+    video_info: VideoInfo,
+    segments: list[HighlightSegment],
+    layout: LayoutSpec,
+    config: AppConfig,
+    temp_dir: str,
+    asr_words: Optional[list[dict]] = None,
+) -> list[str]:
+    """Render a short 720x1280 preview clip for layout/subtitle/CTA checks."""
+    if not segments:
+        return []
+    preview_config = copy.deepcopy(config)
+    preview_config.export.width = int(config.quick_preview.width)
+    preview_config.export.height = int(config.quick_preview.height)
+    preview_config.export.render_preset = "fast"
+    preview_config.export.fps = min(int(config.export.fps or 30), 30)
+    preview_config.render_resume_enabled = False
+    preview_layout = _recompute_layout_for_output(
+        layout,
+        video_info,
+        preview_config,
+        preview_config.export.width,
+        preview_config.export.height,
+    )
+
+    first = segments[0]
+    preview_duration = max(3.0, float(config.quick_preview.duration_sec or 10.0))
+    end_sec = min(first.end_sec, first.start_sec + preview_duration)
+    if end_sec <= first.start_sec:
+        end_sec = min(video_info.duration_sec, first.start_sec + preview_duration)
+    preview_segment = HighlightSegment(
+        start_sec=first.start_sec,
+        end_sec=end_sec,
+        score=first.score,
+        reasons=list(getattr(first, "reasons", []) or []) + ["quick_preview"],
+        source="quick_preview",
+    )
+
+    out_dir = ensure_dir(config.quick_preview.output_dir)
+    out_path = out_dir / safe_filename(
+        f"quick_preview_{fmt_time(preview_segment.start_sec)}_{fmt_time(preview_segment.end_sec)}.mp4"
+    )
+    success = render_clip(
+        video_path=video_path,
+        video_info=video_info,
+        segment=preview_segment,
+        layout=preview_layout,
+        config=preview_config,
+        output_path=str(out_path),
+        temp_dir=temp_dir,
+        asr_words=asr_words,
+        clip_index=0,
+    )
+    return [str(out_path)] if success else []
+
+
+def _recompute_layout_for_output(
+    layout: LayoutSpec,
+    video_info: VideoInfo,
+    config: AppConfig,
+    out_w: int,
+    out_h: int,
+) -> LayoutSpec:
+    """Recompute output rectangles for a different preview resolution."""
+    from app.content_detector import ContentDetectionResult
+    from app.layout import compute_layout
+    from app.webcam_types import WebcamDetectionResult, WebcamRegion
+
+    if layout.has_webcam and layout.webcam_src is not None:
+        x, y, w, h = layout.webcam_src
+        webcam_result = WebcamDetectionResult(
+            has_webcam=True,
+            region=WebcamRegion(x=x, y=y, w=w, h=h, confidence=1.0),
+            confidence=1.0,
+        )
+    else:
+        webcam_result = WebcamDetectionResult(has_webcam=False)
+
+    content_result = None
+    if layout.content_src is not None:
+        content_result = ContentDetectionResult(
+            has_content=True,
+            crop=layout.content_src,
+            confidence=1.0,
+            reason="quick_preview_layout",
+        )
+
+    return compute_layout(
+        src_w=video_info.width,
+        src_h=video_info.height,
+        out_w=out_w,
+        out_h=out_h,
+        webcam_result=webcam_result,
+        config=config,
+        content_result=content_result,
+    )
+
+
+def _is_existing_output_valid(path: str, segment: HighlightSegment) -> bool:
+    p = Path(path)
+    if not p.is_file() or p.stat().st_size < 1024:
+        return False
+    duration = _probe_media_duration(str(p))
+    if duration is None:
+        return False
+    expected = max(0.1, float(segment.end_sec - segment.start_sec))
+    # CTA freeze can extend the final output, so only reject obviously broken files.
+    return duration >= min(5.0, expected * 0.50)
