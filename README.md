@@ -96,6 +96,8 @@ python -m app.main --input "video.mp4" --no-music
 python -m app.main --input "video.mp4" --no-cta
 python -m app.main --input "video.mp4" --no-subs
 python -m app.main --input "video.mp4" --subtitle-lang ru --cta-lang ru --cta-voice "sounds\voice\cta.mp3"
+python -m app.main --input "video.mp4" --cta-text "МОЯ НАДПИСЬ"
+python -m app.main --input "video.mp4" --cta-text-file "cta_texts\ru.txt"
 python -m app.main --input "video.mp4" --delete-input-after-success
 python -m app.main --input "video.mp4" --preview-layout
 python -m app.main --input "video.mp4" --preview-layout --preview-time 03:00
@@ -124,8 +126,9 @@ Important fields:
 - `whisper_model_cache_dir`: persistent faster-whisper model cache; default `models/whisper`.
 - `webcam_detection`, `webcam_edge_margin_ratio`, `manual_webcam_crop`, `manual_slot_crop`, `layout_preview_enabled`, `layout_preview_time_sec`, `layout_debug_preview`, `layout_preview_save_path`, `webcam_top_ratio`, `content_bottom_ratio`.
 - `highlight_target_count_per_hour`, `min_clip_duration_sec`, `preferred_clip_duration_sec`, `max_clip_duration_sec`, `hard_max_clip_duration_sec`.
-- `cta.enabled`, `cta.trigger_range_sec`, `cta.freeze_duration_sec`, `cta.text_en`, `cta.text_ru`, `cta.language`, `cta.font_path`, `cta.voice_mp3_path`.
+- `cta.enabled`, `cta.trigger_range_sec`, `cta.freeze_duration_sec`, `cta.text_mode`, `cta.custom_text`, `cta.text_file_path_en`, `cta.text_file_path_ru`, `cta.text_en`, `cta.text_ru`, `cta.language`, `cta.font_path`, `cta.font_size`, `cta.min_font_size`, `cta.max_text_width_ratio`, `cta.max_text_lines`, `cta.voice_mp3_path`.
 - When `cta.voice_mp3_path` points to an existing audio file, the CTA freeze duration follows that file's duration; if the file is missing, `cta.freeze_duration_sec` is used.
+- Default CTA file variants are limited to: `THE GAME IN BIO`, `LINK IN BIO`, `BIO FOR MORE`, `CHECK BIO`, `MORE IN BIO`, `ИГРА В ОПИСАНИИ`, `ССЫЛКА В ОПИСАНИИ`.
 - `music.enabled`, `music.folder`, `music.volume_min`, `music.volume_max`, `music.duck_under_speech`; default `music.enabled` is `false`.
 - `variation.enabled`, `variation.cta_text_variants`, `variation.cta_text_variants_ru`, `variation.subtitle_style_variants`, `variation.bgm_random_pick`.
 - `cleanup_temp_files`, `delete_input_after_success`.
@@ -204,6 +207,7 @@ Do not run the video renderer inside Vercel/serverless. ffmpeg rendering and ASR
 - First ASR run is slow: faster-whisper downloads the model once.
 - Background music is disabled by default. Use `--music` or set `music.enabled: true` to opt in.
 - Word-by-word subtitles use `subtitles/ru.ass` or `subtitles/en.ass` as the ASS style template depending on the selected language.
+- CTA pause text uses `cta_texts/ru.txt` or `cta_texts/en.txt` by default. Use `--cta-text "..."` for a custom one-off phrase, or edit those files for the standard phrase pool. Long CTA text is wrapped and font-fitted so it stays inside the 9:16 frame.
 - If webcam is not detected, the main content uses the best active slot crop with a blurred fill and subtitles move to the top-safe position.
 - Use `--preview-layout` when you want to manually mark the stream layout. The window opens on the middle frame by default and includes a timeline slider so you can switch to another moment before selecting. `--preview-time 03:00` or `layout_preview_time_sec` changes the initial frame. Selecting both areas uses the split webcam/game layout. Selecting only one area uses that crop as the centered no-webcam vertical content with blurred fill and top-safe subtitles.
 - Set `debug: true` to save a layout preview with a green webcam box and red slot box. If a rare stream still needs correction, set `manual_webcam_crop` or `manual_slot_crop` to `[x, y, width, height]` in source-video pixels.

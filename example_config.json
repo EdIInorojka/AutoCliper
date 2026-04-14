@@ -34,13 +34,21 @@
     "trigger_range_sec": [7.0, 10.0],
     "freeze_duration_sec": 4.0,
     "grayscale_strength": 1.0,
+    "text_mode": "file",
     "text": "THE GAME IN BIO",
     "text_en": "THE GAME IN BIO",
     "text_ru": "ИГРА В ОПИСАНИИ",
+    "custom_text": null,
+    "text_file_path": "",
+    "text_file_path_en": "cta_texts/en.txt",
+    "text_file_path_ru": "cta_texts/ru.txt",
     "language": "auto",
     "font_name": "Impact",
     "font_path": "fonts/cta.ttf",
     "font_size": 78,
+    "min_font_size": 34,
+    "max_text_width_ratio": 0.86,
+    "max_text_lines": 3,
     "font_color": "0xFFD200",
     "border_color": "black",
     "shadow_color": "red@0.85",
@@ -78,18 +86,13 @@
     "cta_text_variants": [
       "THE GAME IN BIO",
       "LINK IN BIO",
-      "FULL VIDEO IN BIO",
-      "WATCH FULL IN BIO",
       "BIO FOR MORE",
       "CHECK BIO",
-      "FULL STREAM IN BIO",
       "MORE IN BIO"
     ],
     "cta_text_variants_ru": [
       "ИГРА В ОПИСАНИИ",
-      "ССЫЛКА В ОПИСАНИИ",
-      "ПОЛНОЕ ВИДЕО В ОПИСАНИИ",
-      "ЕЩЕ БОЛЬШЕ В ОПИСАНИИ"
+      "ССЫЛКА В ОПИСАНИИ"
     ]
   },
   "bot_preset_fields": {
@@ -97,18 +100,13 @@
     "available_cta_texts": [
       "THE GAME IN BIO",
       "LINK IN BIO",
-      "FULL VIDEO IN BIO",
-      "WATCH FULL IN BIO",
       "BIO FOR MORE",
       "CHECK BIO",
-      "FULL STREAM IN BIO",
       "MORE IN BIO"
     ],
     "available_cta_texts_ru": [
       "ИГРА В ОПИСАНИИ",
-      "ССЫЛКА В ОПИСАНИИ",
-      "ПОЛНОЕ ВИДЕО В ОПИСАНИИ",
-      "ЕЩЕ БОЛЬШЕ В ОПИСАНИИ"
+      "ССЫЛКА В ОПИСАНИИ"
     ],
     "available_languages": ["auto", "ru", "en"]
   },

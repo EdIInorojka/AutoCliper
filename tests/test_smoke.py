@@ -18,6 +18,10 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.export.height, 1920)
         self.assertTrue(config.subtitles_enabled)
         self.assertTrue(config.cta.enabled)
+        self.assertEqual(config.cta.text_mode, "file")
+        self.assertEqual(config.cta.text_file_path_en, "cta_texts/en.txt")
+        self.assertEqual(config.cta.text_file_path_ru, "cta_texts/ru.txt")
+        self.assertEqual(config.cta.max_text_lines, 3)
         self.assertFalse(config.music.enabled)
         self.assertEqual(config.subtitles_position, "between_webcam_and_game")
         self.assertEqual(config.export.crf, 22)
@@ -31,6 +35,34 @@ class TestConfig(unittest.TestCase):
         self.assertIsNone(config.layout_preview_time_sec)
         self.assertEqual(config.layout_debug_preview, "layout_debug_preview.jpg")
         self.assertEqual(config.layout_preview_save_path, "layout_selection.json")
+        self.assertEqual(
+            config.variation.cta_text_variants,
+            [
+                "THE GAME IN BIO",
+                "LINK IN BIO",
+                "BIO FOR MORE",
+                "CHECK BIO",
+                "MORE IN BIO",
+            ],
+        )
+        self.assertEqual(
+            config.variation.cta_text_variants_ru,
+            ["ИГРА В ОПИСАНИИ", "ССЫЛКА В ОПИСАНИИ"],
+        )
+        self.assertEqual(
+            config.bot_preset_fields.available_cta_texts,
+            [
+                "THE GAME IN BIO",
+                "LINK IN BIO",
+                "BIO FOR MORE",
+                "CHECK BIO",
+                "MORE IN BIO",
+            ],
+        )
+        self.assertEqual(
+            config.bot_preset_fields.available_cta_texts_ru,
+            ["ИГРА В ОПИСАНИИ", "ССЫЛКА В ОПИСАНИИ"],
+        )
 
     def test_load_example_config(self):
         from app.config import load_config, AppConfig
@@ -329,6 +361,31 @@ class TestCTAPause(unittest.TestCase):
         self.assertEqual(pick_cta_text(config), "ИГРА В ОПИСАНИИ")
         config.cta.language = "en"
         self.assertEqual(pick_cta_text(config), "THE GAME IN BIO")
+
+    def test_pick_cta_text_custom_mode(self):
+        from app.cta_pause import pick_cta_text
+        from app.config import AppConfig
+
+        config = AppConfig()
+        config.cta.text_mode = "custom"
+        config.cta.custom_text = "МОЯ ИГРА ТУТ"
+
+        self.assertEqual(pick_cta_text(config), "МОЯ ИГРА ТУТ")
+
+    def test_prepare_cta_text_layout_wraps_long_text(self):
+        from app.cta_pause import prepare_cta_text_layout
+        from app.config import AppConfig
+
+        config = AppConfig()
+        lines, font_size = prepare_cta_text_layout(
+            "ПОЛНОЕ ВИДЕО И САМАЯ ДЛИННАЯ НАДПИСЬ В ОПИСАНИИ",
+            config,
+            output_width=1080,
+        )
+
+        self.assertLessEqual(len(lines), config.cta.max_text_lines)
+        self.assertLessEqual(font_size, config.cta.font_size)
+        self.assertGreaterEqual(font_size, config.cta.min_font_size)
 
     def test_pick_cta_time(self):
         from app.cta_pause import pick_cta_trigger_time

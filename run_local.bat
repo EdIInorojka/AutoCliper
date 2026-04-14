@@ -2,32 +2,32 @@
 setlocal EnableExtensions DisableDelayedExpansion
 cd /d "%~dp0"
 
-REM StreamCuter - Quick start batch file for Windows
-REM Usage:
+REM StreamCuter - быстрый запуск под Windows
+REM Пример:
 REM   run_local.bat --input "D:\video.mp4" --clips 3
 
 echo ============================================
-echo   StreamCuter - Vertical Clip Generator
+echo   StreamCuter - генератор вертикальных клипов
 echo ============================================
 echo.
 
 REM Check Python first.
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Python not found. Install Python 3.11+ first.
+    echo ОШИБКА: Python не найден. Сначала установи Python 3.11+.
     echo https://www.python.org/downloads/
     pause
     exit /b 1
 )
 
-REM Prefer ffmpeg/ffprobe already available in PATH. Bootstrap only if both PATH and local tools are missing.
+REM Сначала используем ffmpeg/ffprobe из PATH. Скачиваем локально только если их нет.
 where ffmpeg >nul 2>&1
 if errorlevel 1 (
     if exist "tools\ffmpeg\bin\ffmpeg.exe" (
-        echo Using bundled ffmpeg from tools\ffmpeg\bin
+        echo Использую локальный ffmpeg из tools\ffmpeg\bin
         set "PATH=%CD%\tools\ffmpeg\bin;%PATH%"
     ) else (
-        echo ffmpeg was not found in PATH. Bootstrapping ffmpeg into tools\ffmpeg...
+        echo ffmpeg не найден в PATH. Скачиваю ffmpeg в tools\ffmpeg...
         powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\bootstrap.ps1" -ProjectDir "%CD%"
         if exist "tools\ffmpeg\bin\ffmpeg.exe" (
             set "PATH=%CD%\tools\ffmpeg\bin;%PATH%"
@@ -38,33 +38,33 @@ if errorlevel 1 (
 
 ffmpeg -version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: ffmpeg is still not available.
-    echo Install ffmpeg from https://ffmpeg.org/download.html or fix tools\ffmpeg.
+    echo ОШИБКА: ffmpeg всё ещё недоступен.
+    echo Установи ffmpeg с https://ffmpeg.org/download.html или проверь tools\ffmpeg.
     pause
     exit /b 1
 )
 
 ffprobe -version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: ffprobe is not available.
-    echo Install ffmpeg from https://ffmpeg.org/download.html or fix tools\ffmpeg.
+    echo ОШИБКА: ffprobe недоступен.
+    echo Установи ffmpeg с https://ffmpeg.org/download.html или проверь tools\ffmpeg.
     pause
     exit /b 1
 )
 
-REM Install dependencies if needed.
+REM Ставим зависимости при первом запуске.
 if not exist "venv" (
-    echo Creating virtual environment...
+    echo Создаю виртуальное окружение...
     python -m venv venv
     call "venv\Scripts\activate.bat"
-    echo Installing dependencies...
+    echo Устанавливаю зависимости...
     pip install -r requirements.txt
 ) else (
     call "venv\Scripts\activate.bat"
 )
 
 echo.
-echo Running StreamCuter with args: %*
+echo Запускаю StreamCuter с аргументами: %*
 echo.
 
 python -m app.main %*
@@ -72,9 +72,9 @@ set "SC_EXIT=%ERRORLEVEL%"
 
 echo.
 if "%SC_EXIT%"=="0" (
-    echo Done. Check the output folder for results.
+    echo Готово. Проверь папку output или выбранную папку выгрузки.
 ) else (
-    echo StreamCuter failed with exit code %SC_EXIT%.
+    echo StreamCuter завершился с ошибкой. Код: %SC_EXIT%.
 )
 pause
 exit /b %SC_EXIT%

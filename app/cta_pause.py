@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import random
+import textwrap
 from typing import Optional
 
 from app.utils.console import get_console
@@ -109,6 +110,18 @@ def _cta_language(config: AppConfig) -> str:
 def pick_cta_text(config: AppConfig) -> str:
     """Pick CTA text, possibly from variants list."""
     lang = _cta_language(config)
+    text_mode = (getattr(config.cta, "text_mode", "file") or "file").lower()
+    custom_text = _clean_cta_text(getattr(config.cta, "custom_text", "") or "")
+    if text_mode == "custom" and custom_text:
+        return custom_text
+
+    if text_mode == "file":
+        file_variants = _load_cta_text_variants(config, lang)
+        if file_variants:
+            if config.variation.enabled:
+                return random.choice(file_variants)
+            return file_variants[0]
+
     if lang == "ru":
         variants = getattr(config.variation, "cta_text_variants_ru", [])
         if config.variation.enabled and variants:
@@ -121,6 +134,149 @@ def pick_cta_text(config: AppConfig) -> str:
     if config.cta.text and config.cta.text != DEFAULT_CTA_TEXT_EN:
         return config.cta.text
     return getattr(config.cta, "text_en", DEFAULT_CTA_TEXT_EN)
+
+
+def _clean_cta_text(text: str) -> str:
+    return " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split())
+
+
+def _load_cta_text_variants(config: AppConfig, lang: str) -> list[str]:
+    configured_path = getattr(config.cta, "text_file_path", "") or ""
+    if configured_path:
+        paths = [configured_path]
+    elif lang == "ru":
+        paths = [getattr(config.cta, "text_file_path_ru", "") or "cta_texts/ru.txt"]
+    else:
+        paths = [getattr(config.cta, "text_file_path_en", "") or "cta_texts/en.txt"]
+
+    variants: list[str] = []
+    for raw_path in paths:
+        path = _resolve_optional_path(raw_path)
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                for line in f:
+                    text = _clean_cta_text(line)
+                    if text and not text.startswith("#"):
+                        variants.append(text)
+        except OSError:
+            continue
+    return variants
+
+
+def prepare_cta_text_layout(
+    text: str,
+    config: AppConfig,
+    output_width: Optional[int] = None,
+) -> tuple[list[str], int]:
+    """
+    Wrap CTA text and choose a font size that fits inside the vertical frame.
+
+    The estimate is intentionally conservative because ffmpeg drawtext cannot
+    auto-fit text to a bounding box. This keeps long custom captions inside the
+    video instead of letting them bleed past the edges.
+    """
+    clean = _clean_cta_text(text) or DEFAULT_CTA_TEXT_EN
+    out_w = int(output_width or getattr(config.export, "width", 1080) or 1080)
+    base_font_size = max(24, int(getattr(config.cta, "font_size", 78) or 78))
+    min_font_size = max(18, int(getattr(config.cta, "min_font_size", 34) or 34))
+    max_lines = max(1, int(getattr(config.cta, "max_text_lines", 3) or 3))
+    width_ratio = float(getattr(config.cta, "max_text_width_ratio", 0.86) or 0.86)
+    width_ratio = max(0.45, min(0.96, width_ratio))
+    max_width_px = max(200, out_w * width_ratio)
+
+    # Average uppercase/Cyrillic glyphs are wide in Impact/Arial Black.
+    char_ratio = 0.62
+    max_chars = max(6, int(max_width_px / max(1.0, base_font_size * char_ratio)))
+    lines = _wrap_text_to_lines(clean, max_chars, max_lines)
+    longest_line = max((len(line) for line in lines), default=len(clean))
+    fit_size = int(max_width_px / max(1.0, longest_line * char_ratio))
+    font_size = max(min_font_size, min(base_font_size, fit_size))
+
+    # If a very long custom text still cannot fit, shrink all the way down to
+    # the configured minimum. The line wrapping keeps it visually contained.
+    return lines, font_size
+
+
+def _wrap_text_to_lines(text: str, max_chars: int, max_lines: int) -> list[str]:
+    if len(text) <= max_chars:
+        return [text]
+
+    width = max_chars
+    lines = textwrap.wrap(text, width=width, break_long_words=False, break_on_hyphens=False)
+    while len(lines) > max_lines and width < max(len(text), max_chars):
+        width += 2
+        lines = textwrap.wrap(text, width=width, break_long_words=False, break_on_hyphens=False)
+
+    if len(lines) > max_lines or any(len(line) > width * 1.25 for line in lines):
+        width = max(max_chars, int(len(text) / max_lines) + 1)
+        lines = textwrap.wrap(text, width=width, break_long_words=True, break_on_hyphens=False)
+
+    if len(lines) > max_lines:
+        kept = lines[: max_lines - 1]
+        kept.append(" ".join(lines[max_lines - 1:]))
+        lines = kept
+    return [line.strip() for line in lines if line.strip()] or [text]
+
+
+def _partial_cta_lines(lines: list[str], visible_chars: int) -> list[str]:
+    remaining = max(0, visible_chars)
+    partials: list[str] = []
+    for line in lines:
+        take = min(len(line), remaining)
+        partials.append(line[:take])
+        remaining -= take
+    return partials
+
+
+def _line_y_expr(line_index: int, line_count: int, font_size: int) -> str:
+    line_gap = font_size * 1.12
+    total_height = (line_count - 1) * line_gap
+    offset = line_index * line_gap - total_height / 2
+    if offset >= 0:
+        return f"(h*0.42)+{offset:.1f}"
+    return f"(h*0.42)-{abs(offset):.1f}"
+
+
+def _drawtext_for_lines(
+    lines: list[str],
+    drawtext_style: str,
+    enable_expr: str = "",
+) -> str:
+    line_count = len(lines)
+    filters: list[str] = []
+    for idx, line in enumerate(lines):
+        if not line:
+            continue
+        escaped = _escape_drawtext_text(line)
+        y_expr = _line_y_expr(idx, line_count, _style_font_size(drawtext_style))
+        enable_part = f"enable='{enable_expr}':" if enable_expr else ""
+        filters.append(
+            "drawtext="
+            f"text='{escaped}':"
+            f"{drawtext_style}"
+            "x=(w-text_w)/2:"
+            f"y={y_expr}:"
+            f"{enable_part}"
+            "borderw=5:"
+            "box=1:boxcolor=black@0.35:boxborderw=18"
+        )
+    return ",".join(filters)
+
+
+def _style_font_size(drawtext_style: str) -> int:
+    marker = "fontsize="
+    start = drawtext_style.find(marker)
+    if start < 0:
+        return 78
+    start += len(marker)
+    end = drawtext_style.find(":", start)
+    raw = drawtext_style[start:] if end < 0 else drawtext_style[start:end]
+    try:
+        return int(float(raw))
+    except ValueError:
+        return 78
 
 
 def _effective_freeze_duration(
@@ -262,19 +418,16 @@ def build_cta_segment_filter(
 
     grayscale_strength = float(config.cta.grayscale_strength)
     grayscale_strength = max(0.0, min(1.0, grayscale_strength))
-    escaped_text = _escape_drawtext_text(cta_text)
     font_option = _drawtext_font_option(config)
-    font_size = max(40, min(140, int(getattr(config.cta, "font_size", 78))))
+    cta_lines, font_size = prepare_cta_text_layout(cta_text, config)
     font_color = getattr(config.cta, "font_color", "0xFFD200") or "0xFFD200"
     border_color = getattr(config.cta, "border_color", "black") or "black"
     shadow_color = getattr(config.cta, "shadow_color", "red@0.85") or "red@0.85"
     drawtext_style = (
         f"{font_option}"
         f"fontsize={font_size}:fontcolor={font_color}:"
-        "x=(w-text_w)/2:y=h*0.42:"
-        f"borderw=5:bordercolor={border_color}:"
+        f"bordercolor={border_color}:"
         f"shadowcolor={shadow_color}:shadowx=5:shadowy=5:"
-        "box=1:boxcolor=black@0.35:boxborderw=18:"
     )
 
     # Simplified approach: use trim + tpad for freeze, then concat
@@ -291,29 +444,27 @@ def build_cta_segment_filter(
         # Small initial delay so the freeze "lands" before text starts.
         start_delay = 0.15
         parts: list[str] = []
-        for i in range(1, len(cta_text) + 1):
+        total_chars = sum(len(line) for line in cta_lines)
+        for i in range(1, total_chars + 1):
             t0 = start_delay + (i - 1) * per_char
             if t0 >= freeze_dur:
                 break
             t1 = min(freeze_dur, start_delay + i * per_char)
-            if i == len(cta_text) or t1 <= t0:
+            if i == total_chars or t1 <= t0:
                 t1 = freeze_dur
-            partial = _escape_drawtext_text(cta_text[:i])
-            parts.append(
-                "drawtext="
-                f"text='{partial}':"
-                f"{drawtext_style}"
-                f"enable='between(t,{t0:.3f},{t1:.3f})'"
+            partial_lines = _partial_cta_lines(cta_lines, i)
+            part = _drawtext_for_lines(
+                partial_lines,
+                drawtext_style,
+                enable_expr=f"between(t,{t0:.3f},{t1:.3f})",
             )
+            if part:
+                parts.append(part)
         if parts:
             drawtext_chain = "," + ",".join(parts)
     else:
         # Static text during the entire freeze window.
-        drawtext_chain = (
-            ",drawtext="
-            f"text='{escaped_text}':"
-            f"{drawtext_style.rstrip(':')}"
-        )
+        drawtext_chain = "," + _drawtext_for_lines(cta_lines, drawtext_style)
 
     # Grayscale: allow partial desaturation via hue saturation.
     # 1.0 => fully grayscale (s=0), 0.0 => no change (s=1).

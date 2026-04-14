@@ -35,6 +35,14 @@ def cli_entry():
     parser.add_argument("--lang", "-l", choices=["auto", "ru", "en"], required=False, help="Subtitle/ASR language")
     parser.add_argument("--subtitle-lang", choices=["auto", "ru", "en"], required=False, help="Alias for --lang")
     parser.add_argument("--cta-lang", choices=["auto", "ru", "en"], required=False, help="CTA text language")
+    parser.add_argument("--cta-text", required=False, help="Custom CTA text for the freeze moment")
+    parser.add_argument("--cta-text-file", required=False, help="Path to a file with CTA text variants, one per line")
+    parser.add_argument(
+        "--cta-text-mode",
+        choices=["file", "custom", "variants"],
+        required=False,
+        help="CTA text source: file, custom, or variants from config",
+    )
     parser.add_argument("--cta-voice", required=False, help="Path to CTA voice mp3/wav file")
     parser.add_argument("--theme", choices=["red", "purple", "black", "yellow"], required=False, help="Subtitle theme")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without processing")
@@ -90,6 +98,14 @@ def cli_entry():
         config.language = subtitle_lang
     if args.cta_lang:
         config.cta.language = args.cta_lang
+    if args.cta_text_mode:
+        config.cta.text_mode = args.cta_text_mode
+    if args.cta_text:
+        config.cta.custom_text = args.cta_text
+        config.cta.text_mode = "custom"
+    if args.cta_text_file:
+        config.cta.text_file_path = args.cta_text_file
+        config.cta.text_mode = "file"
     if args.cta_voice:
         config.cta.voice_mp3_path = args.cta_voice
     if args.theme:
@@ -148,7 +164,12 @@ def cli_entry():
         console.print(f"Layout debug preview: {config.layout_debug_preview}")
         console.print(f"Layout selection save path: {config.layout_preview_save_path}")
         console.print(f"Music: {config.music.enabled}")
-        console.print(f"CTA: {config.cta.enabled} (language={config.cta.language})")
+        console.print(
+            f"CTA: {config.cta.enabled} "
+            f"(language={config.cta.language}, text_mode={config.cta.text_mode})"
+        )
+        console.print(f"CTA custom text: {config.cta.custom_text or 'none'}")
+        console.print(f"CTA text file: {config.cta.text_file_path or 'language default'}")
         console.print(f"CTA voice: {config.cta.voice_mp3_path or 'none'}")
         console.print(f"Delete input after success: {config.delete_input_after_success}")
         console.print(

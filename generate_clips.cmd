@@ -4,32 +4,51 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 echo ============================================
-echo   StreamCuter - clip generation wizard
+echo   StreamCuter - мастер генерации клипов
 echo ============================================
 echo.
 
 set "SC_INPUT="
-set /p "SC_INPUT=1. Video path or YouTube/Kick URL: "
+set /p "SC_INPUT=1. Путь к видео или ссылка YouTube/Kick: "
 if not defined SC_INPUT (
-    echo ERROR: input is empty.
+    echo ОШИБКА: путь или ссылка не указаны.
     pause
     exit /b 1
 )
 
 echo.
-echo 2. Subtitle and CTA language:
-echo    [1] Russian
-echo    [2] English
-choice /C 12 /N /M "Choice: "
+echo 2. Язык субтитров и надписи при паузе:
+echo    [1] Русский
+echo    [2] Английский
+choice /C 12 /N /M "Выбор: "
 set "SC_LANG=ru"
 if errorlevel 2 set "SC_LANG=en"
 
 echo.
+echo 3. Надпись при зависании видео:
+echo    [1] Стандартные надписи из файла
+echo    [2] Своя надпись
+choice /C 12 /N /M "Выбор: "
+set "SC_CTA_FLAG=--cta-text-mode"
+set "SC_CTA_VALUE=file"
+if errorlevel 2 (
+    set "SC_CTA_TEXT="
+    set /p "SC_CTA_TEXT=Введите свою надпись: "
+    if defined SC_CTA_TEXT (
+        set "SC_CTA_FLAG=--cta-text"
+        set "SC_CTA_VALUE=%SC_CTA_TEXT%"
+    ) else (
+        set "SC_CTA_FLAG=--cta-text-mode"
+        set "SC_CTA_VALUE=file"
+    )
+)
+
+echo.
 set "SC_VOICE="
-set /p "SC_VOICE=3. CTA voice mp3/wav path (Enter = none): "
+set /p "SC_VOICE=4. Файл озвучки паузы mp3/wav (Enter = без озвучки): "
 if defined SC_VOICE (
     if not exist "%SC_VOICE%" (
-        echo WARNING: CTA voice file was not found. Continuing without it:
+        echo ВНИМАНИЕ: файл озвучки не найден, продолжаю без него:
         echo   %SC_VOICE%
         set "SC_VOICE="
     )
@@ -37,70 +56,75 @@ if defined SC_VOICE (
 
 echo.
 set "SC_OUT="
-set /p "SC_OUT=4. Output folder (Enter = output\generated): "
+set /p "SC_OUT=5. Папка для готовых видео (Enter = output\generated): "
 if not defined SC_OUT set "SC_OUT=output\generated"
 
 echo.
 set "SC_CLIPS="
-set /p "SC_CLIPS=5. Number of clips (Enter = 5): "
+set /p "SC_CLIPS=6. Количество клипов (Enter = 5): "
 if not defined SC_CLIPS set "SC_CLIPS=5"
 
 echo.
-echo 6. Open layout preview selector?
-echo    [1] Yes
-echo    [2] No, use auto layout
-choice /C 12 /N /M "Choice: "
+echo 7. Открыть окно выбора вебки/слота?
+echo    [1] Да
+echo    [2] Нет, использовать авторазметку
+choice /C 12 /N /M "Выбор: "
 set "SC_PREVIEW=--preview-layout"
 if errorlevel 2 set "SC_PREVIEW="
 set "SC_PREVIEW_TIME="
 if defined SC_PREVIEW (
-    set /p "SC_PREVIEW_TIME=Preview start time (Enter = middle, examples: 180 or 03:00): "
+    set /p "SC_PREVIEW_TIME=Момент предпросмотра (Enter = середина, примеры: 180 или 03:00): "
 )
 
 echo.
-echo 7. Delete source video after successful render?
-echo    [1] Yes
-echo    [2] No
-choice /C 12 /N /M "Choice: "
+echo 8. Удалить исходное видео после успешной генерации?
+echo    [1] Да
+echo    [2] Нет
+choice /C 12 /N /M "Выбор: "
 set "SC_DELETE_SOURCE=--delete-input-after-success"
 if errorlevel 2 set "SC_DELETE_SOURCE="
 
 echo.
 echo ============================================
-echo   Starting generation
+echo   Запускаю генерацию
 echo ============================================
-echo Input:       %SC_INPUT%
-echo Language:    %SC_LANG%
-echo CTA voice:   %SC_VOICE%
-echo Output dir:  %SC_OUT%
-echo Clips:       %SC_CLIPS%
-if defined SC_PREVIEW (
-    echo Layout UI:   yes
-    if defined SC_PREVIEW_TIME echo Preview at:  %SC_PREVIEW_TIME%
+echo Видео:        %SC_INPUT%
+echo Язык:         %SC_LANG%
+if "%SC_CTA_FLAG%"=="--cta-text" (
+    echo CTA текст:    %SC_CTA_VALUE%
 ) else (
-    echo Layout UI:   no
+    echo CTA текст:    стандартный файл
 )
-echo Music:       off
-if defined SC_DELETE_SOURCE (
-    echo Delete src:  yes
+echo Озвучка CTA:  %SC_VOICE%
+echo Папка:        %SC_OUT%
+echo Клипов:       %SC_CLIPS%
+if defined SC_PREVIEW (
+    echo Разметка UI:   да
+    if defined SC_PREVIEW_TIME echo Кадр UI:      %SC_PREVIEW_TIME%
 ) else (
-    echo Delete src:  no
+    echo Разметка UI:   нет
+)
+echo Музыка:       выкл
+if defined SC_DELETE_SOURCE (
+    echo Удалить src:  да
+) else (
+    echo Удалить src:  нет
 )
 echo.
-echo Pipeline logs: prerequisites, ingest, probe, webcam, ASR, highlights, render, cleanup.
+echo Этапы: проверка, вход, анализ, вебка/слот, ASR, хайлайты, рендер, очистка.
 echo.
 
 if defined SC_VOICE (
     if defined SC_PREVIEW_TIME (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
     ) else (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --cta-voice "%SC_VOICE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
     )
 ) else (
     if defined SC_PREVIEW_TIME (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% --preview-time "%SC_PREVIEW_TIME%" %SC_DELETE_SOURCE%
     ) else (
-        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
+        call "%~dp0run_local.bat" --input "%SC_INPUT%" --subtitle-lang %SC_LANG% --cta-lang %SC_LANG% %SC_CTA_FLAG% "%SC_CTA_VALUE%" --output-dir "%SC_OUT%" --clips %SC_CLIPS% --no-music %SC_PREVIEW% %SC_DELETE_SOURCE%
     )
 )
 

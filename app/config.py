@@ -27,13 +27,21 @@ class CTAConfig:
     trigger_range_sec: List[float] = field(default_factory=lambda: [7.0, 10.0])
     freeze_duration_sec: float = 4.0
     grayscale_strength: float = 1.0
+    text_mode: str = "file"  # file | custom | variants
     text: str = "THE GAME IN BIO"
     text_en: str = "THE GAME IN BIO"
     text_ru: str = "ИГРА В ОПИСАНИИ"
+    custom_text: Optional[str] = None
+    text_file_path: str = ""
+    text_file_path_en: str = "cta_texts/en.txt"
+    text_file_path_ru: str = "cta_texts/ru.txt"
     language: str = "auto"
     font_name: str = "Impact"
     font_path: str = "fonts/cta.ttf"
     font_size: int = 78
+    min_font_size: int = 34
+    max_text_width_ratio: float = 0.86
+    max_text_lines: int = 3
     font_color: str = "0xFFD200"
     border_color: str = "black"
     shadow_color: str = "red@0.85"
@@ -63,11 +71,8 @@ class VariationConfig:
         default_factory=lambda: [
             "THE GAME IN BIO",
             "LINK IN BIO",
-            "FULL VIDEO IN BIO",
-            "WATCH FULL IN BIO",
             "BIO FOR MORE",
             "CHECK BIO",
-            "FULL STREAM IN BIO",
             "MORE IN BIO",
         ]
     )
@@ -75,8 +80,6 @@ class VariationConfig:
         default_factory=lambda: [
             "ИГРА В ОПИСАНИИ",
             "ССЫЛКА В ОПИСАНИИ",
-            "ПОЛНОЕ ВИДЕО В ОПИСАНИИ",
-            "ЕЩЕ БОЛЬШЕ В ОПИСАНИИ",
         ]
     )
 
@@ -90,11 +93,8 @@ class BotPresetFields:
         default_factory=lambda: [
             "THE GAME IN BIO",
             "LINK IN BIO",
-            "FULL VIDEO IN BIO",
-            "WATCH FULL IN BIO",
             "BIO FOR MORE",
             "CHECK BIO",
-            "FULL STREAM IN BIO",
             "MORE IN BIO",
         ]
     )
@@ -102,8 +102,6 @@ class BotPresetFields:
         default_factory=lambda: [
             "ИГРА В ОПИСАНИИ",
             "ССЫЛКА В ОПИСАНИИ",
-            "ПОЛНОЕ ВИДЕО В ОПИСАНИИ",
-            "ЕЩЕ БОЛЬШЕ В ОПИСАНИИ",
         ]
     )
     available_languages: List[str] = field(
