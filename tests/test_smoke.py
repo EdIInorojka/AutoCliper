@@ -42,7 +42,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.cache.dir, "cache")
         self.assertTrue(config.quick_preview.only)
         self.assertFalse(config.quick_preview.enabled)
-        self.assertEqual(config.export.render_preset, "balanced")
+        self.assertEqual(config.export.render_preset, "quality")
         self.assertTrue(config.render_resume_enabled)
         self.assertEqual(config.highlight_report_path, "highlight_report.json")
         self.assertEqual(
@@ -244,6 +244,22 @@ class TestSubtitles(unittest.TestCase):
         self.assertEqual(clean_text("ну,"), "ну")
         self.assertEqual(clean_text(","), "")
 
+    def test_clean_text_filters_english_subtitles(self):
+        from app.subtitles import clean_text
+
+        self.assertEqual(clean_text("hello,", "en"), "hello")
+        self.assertEqual(clean_text("helloПривет你好", "en"), "hello")
+        self.assertEqual(clean_text("don't", "en"), "don't")
+        self.assertEqual(clean_text("Привет", "en"), "")
+        self.assertEqual(clean_text("你好", "en"), "")
+
+    def test_clean_text_filters_russian_subtitles(self):
+        from app.subtitles import clean_text
+
+        self.assertEqual(clean_text("Приветhello你好", "ru"), "Привет")
+        self.assertEqual(clean_text("щас", "ru"), "сейчас")
+        self.assertEqual(clean_text("hello", "ru"), "")
+
     def test_generate_ass_empty(self):
         from app.subtitles import generate_ass_file
         from app.config import AppConfig
@@ -303,7 +319,12 @@ class TestSubtitles(unittest.TestCase):
         config = AppConfig()
         config.language = "en"
         events = generate_word_subtitles(
-            [{"word": "Hello,", "start": 0.0, "end": 0.4}],
+            [
+                {"word": "Hello,", "start": 0.0, "end": 0.4},
+                {"word": "Привет", "start": 0.5, "end": 0.7},
+                {"word": "你好", "start": 0.8, "end": 1.0},
+                {"word": "world", "start": 1.1, "end": 1.3},
+            ],
             config,
         )
 
@@ -316,7 +337,10 @@ class TestSubtitles(unittest.TestCase):
         self.assertIn("Title: FOX One Word EN", content)
         self.assertIn("FOX_ONE_WORD,en", content)
         self.assertIn("Hello", content)
+        self.assertIn("world", content)
         self.assertNotIn("Hello,", content)
+        self.assertNotIn("Привет", content)
+        self.assertNotIn("你好", content)
 
     def test_generate_ass_slot_top_position(self):
         from app.subtitles import SubtitleEvent, WordTiming, generate_ass_file
@@ -532,8 +556,8 @@ class TestRenderer(unittest.TestCase):
         config = AppConfig()
         args = _video_encode_args(config)
         self.assertIn("-crf", args)
-        self.assertIn("22", args)
-        self.assertIn("slow", args)
+        self.assertIn("19", args)
+        self.assertIn("slower", args)
 
     def test_video_encode_args_presets(self):
         from app.renderer import _video_encode_args

@@ -211,6 +211,12 @@ def cli_entry():
             f"render_preset={config.export.render_preset} "
             f"codec={config.export.codec} crf={config.export.crf} preset={config.export.preset}"
         )
+        try:
+            from app.renderer import _video_encode_args
+
+            console.print(f"Effective video args: {' '.join(_video_encode_args(config))}")
+        except Exception:
+            pass
         console.print(
             f"Cache: {config.cache.enabled} "
             f"(asr={config.cache.asr}, highlights={config.cache.highlights}, layout={config.cache.layout}, dir={config.cache.dir})"

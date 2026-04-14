@@ -44,10 +44,13 @@ def run_asr(
         "env_model": os.environ.get("STREAMCUTER_WHISPER_MODEL", "").strip(),
         "word_timestamps": True,
         "vad": True,
-        "version": 2,
+        "version": 3,
     }
     cached = load_json_cache(config, "asr", video_path, cache_extra)
     if cached and isinstance(cached.get("words"), list):
+        cached_lang = str(cached.get("language") or "").lower()
+        if config.language == "auto" and cached_lang in {"ru", "en"}:
+            config.language = cached_lang
         words = cached["words"]
         console.print(f"[green]ASR cache hit: {len(words)} words[/green]")
         return words
@@ -88,6 +91,8 @@ def run_asr(
     if lang == "auto":
         lang = _detect_language(audio_wav, config)
         console.print(f"[dim]Detected language: {lang}[/dim]")
+        if lang in {"ru", "en"}:
+            config.language = lang
 
     try:
         from faster_whisper import WhisperModel
@@ -175,16 +180,22 @@ def run_asr(
 
 
 def _transcribe_words(model, audio_wav: str, lang: str, progress, task) -> list[dict]:
-    segments, info = model.transcribe(
-        audio_wav,
+    transcribe_kwargs = dict(
         language=lang if lang != "auto" else None,
         beam_size=5,
+        condition_on_previous_text=False,
         word_timestamps=True,
         vad_filter=True,
         vad_parameters=dict(
             min_silence_duration_ms=500,
         ),
     )
+    try:
+        segments, info = model.transcribe(audio_wav, **transcribe_kwargs)
+    except TypeError:
+        # Older faster-whisper versions may not accept condition_on_previous_text.
+        transcribe_kwargs.pop("condition_on_previous_text", None)
+        segments, info = model.transcribe(audio_wav, **transcribe_kwargs)
 
     detected_lang = info.language if info else lang
     if progress is not None and task is not None:

@@ -98,7 +98,7 @@ python -m app.main --input "video.mp4" --no-subs
 python -m app.main --input "video.mp4" --subtitle-lang ru --cta-lang ru --cta-voice "sounds\voice\cta.mp3"
 python -m app.main --input "video.mp4" --cta-text "МОЯ НАДПИСЬ"
 python -m app.main --input "video.mp4" --cta-text-file "cta_texts\ru.txt"
-python -m app.main --input "video.mp4" --render-preset balanced
+python -m app.main --input "video.mp4" --render-preset quality
 python -m app.main --input "video.mp4" --quick-preview --quick-preview-sec 10
 python -m app.main --input "video.mp4" --force-render
 python -m app.main --input "video.mp4" --no-cache
@@ -147,8 +147,8 @@ Important fields:
 ## Render Presets
 
 - `fast`: quick local checks, `libx264`, CRF 23, `veryfast`.
-- `balanced`: default, good quality and size, `libx264`, CRF 22, `slow`.
-- `quality`: slower, cleaner output, `libx264`, CRF 19, `slower`.
+- `quality`: default, slower but cleaner output, `libx264`, CRF 19, `slower`.
+- `balanced`: good quality and size, `libx264`, CRF 22, `slow`.
 - `small`: smaller files, still sane quality, `libx264`, CRF 24, `slow`.
 - `nvenc_fast`: NVIDIA GPU path, `h264_nvenc`, CQ 22. Use it only when your ffmpeg build has NVENC support.
 
@@ -234,6 +234,7 @@ Do not run the video renderer inside Vercel/serverless. ffmpeg rendering and ASR
 - First ASR run is slow: faster-whisper downloads the model once.
 - Background music is disabled by default. Use `--music` or set `music.enabled: true` to opt in.
 - Word-by-word subtitles use `subtitles/ru.ass` or `subtitles/en.ass` as the ASS style template depending on the selected language.
+- Subtitle cleanup is language-aware: English subtitles keep English words only, Russian subtitles keep Cyrillic words only, and obvious ASR punctuation/CJK/mojibake noise is dropped without extra slow spellchecking.
 - CTA pause text uses `cta_texts/ru.txt` or `cta_texts/en.txt` by default. Use `--cta-text "..."` for a custom one-off phrase, or edit those files for the standard phrase pool. Long CTA text is wrapped and font-fitted so it stays inside the 9:16 frame.
 - If webcam is not detected, the main content uses the best active slot crop with a blurred fill and subtitles move to the top-safe position.
 - Use `--preview-layout` when you want to manually mark the stream layout. The window opens on the middle frame by default and includes a timeline slider so you can switch to another moment before selecting. `--preview-time 03:00` or `layout_preview_time_sec` changes the initial frame. Selecting both areas uses the split webcam/game layout. Selecting only one area uses that crop as the centered no-webcam vertical content with blurred fill and top-safe subtitles.

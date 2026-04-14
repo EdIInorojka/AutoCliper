@@ -10,7 +10,7 @@ from typing import Any, List, Optional
 
 @dataclass
 class ExportConfig:
-    render_preset: str = "balanced"
+    render_preset: str = "quality"
     width: int = 1080
     height: int = 1920
     fps: int = 30

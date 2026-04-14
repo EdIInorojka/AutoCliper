@@ -313,7 +313,7 @@ def _build_filter_chain(
 
 def _video_encode_args(config: AppConfig) -> list[str]:
     """Build video encoder args. CRF mode gives smaller files at near-identical visual quality."""
-    preset_name = (getattr(config.export, "render_preset", "balanced") or "balanced").lower()
+    preset_name = (getattr(config.export, "render_preset", "quality") or "quality").lower()
     preset = _render_preset_values(preset_name)
     codec = preset.get("codec") or config.export.codec
     args = ["-c:v", codec]
@@ -343,7 +343,7 @@ def _render_preset_values(name: str) -> dict:
         "small": {"codec": "libx264", "crf": 24, "preset": "slow"},
         "nvenc_fast": {"codec": "h264_nvenc", "cq": 22, "preset": "p5"},
     }
-    return presets.get(name, presets["balanced"])
+    return presets.get(name, presets["quality"])
 
 
 def _cta_freeze_duration(config: AppConfig, voice_duration_sec: Optional[float]) -> float:

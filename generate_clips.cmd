@@ -66,17 +66,17 @@ if not defined SC_CLIPS set "SC_CLIPS=5"
 
 echo.
 echo 7. Качество рендера:
-echo    [1] Баланс
-echo    [2] Быстро
-echo    [3] Максимальное качество
+echo    [1] Максимальное качество
+echo    [2] Баланс
+echo    [3] Быстро
 echo    [4] Маленький размер
 echo    [5] Быстро через NVIDIA
 choice /C 12345 /N /M "Выбор: "
-set "SC_RENDER_PRESET=balanced"
+set "SC_RENDER_PRESET=quality"
 if errorlevel 5 set "SC_RENDER_PRESET=nvenc_fast"
 if errorlevel 4 if not errorlevel 5 set "SC_RENDER_PRESET=small"
-if errorlevel 3 if not errorlevel 4 set "SC_RENDER_PRESET=quality"
-if errorlevel 2 if not errorlevel 3 set "SC_RENDER_PRESET=fast"
+if errorlevel 3 if not errorlevel 4 set "SC_RENDER_PRESET=fast"
+if errorlevel 2 if not errorlevel 3 set "SC_RENDER_PRESET=balanced"
 set "SC_RENDER_ARGS=--render-preset %SC_RENDER_PRESET%"
 
 echo.

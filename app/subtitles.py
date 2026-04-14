@@ -31,19 +31,115 @@ class SubtitleEvent:
     words: list[WordTiming] = None
 
 
-def clean_text(text: str) -> str:
-    """Clean ASR output text."""
-    # Remove filler words and artifacts
-    text = re.sub(r'\[.*?\]', '', text)  # [music], [laughter], etc.
-    text = re.sub(r'\(.*?\)', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    # Remove common ASR artifacts
-    text = re.sub(r'\b(um|uh|mm|hm|ah)\b', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\s+', ' ', text).strip()
-    # One-word captions should not carry punctuation such as ASR-added commas.
-    text = text.replace(",", "").replace("،", "").replace("，", "")
-    text = text.strip(" \t\r\n\"'“”‘’«».,!?;:…")
+def clean_text(text: str, language: str = "auto") -> str:
+    """Clean ASR output text with language-specific alphabet filtering."""
+    text = _normalize_subtitle_text(text)
+    text = re.sub(r"\[.*?\]", "", text)  # [music], [laughter], etc.
+    text = re.sub(r"\(.*?\)", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\b(um|uh|mm|hm|ah|er|eh)\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(ээ|э|эм|мм|м-м|хм)\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = _strip_subtitle_punctuation(text)
+
+    lang = _normalize_language(language)
+    if lang == "en":
+        text = _clean_english_word(text)
+    elif lang == "ru":
+        text = _clean_russian_word(text)
+    else:
+        text = _clean_mixed_word(text)
+    return _strip_subtitle_punctuation(text)
+
+
+def _normalize_subtitle_text(text: str) -> str:
+    replacements = {
+        "\ufeff": "",
+        "\u200b": "",
+        "\u200c": "",
+        "\u200d": "",
+        "вЂњ": '"',
+        "вЂќ": '"',
+        "вЂ": "'",
+        "вЂ™": "'",
+        "В«": '"',
+        "В»": '"',
+        "،": "",
+        "，": "",
+        "。": "",
+        "、": "",
+        "¿": "",
+        "¡": "",
+    }
+    value = str(text or "")
+    for src, dst in replacements.items():
+        value = value.replace(src, dst)
+    return value
+
+
+def _normalize_language(language: str) -> str:
+    lang = (language or "auto").lower()
+    return lang if lang in {"ru", "en"} else "auto"
+
+
+def _strip_subtitle_punctuation(text: str) -> str:
+    text = str(text or "").replace(",", "")
+    text = re.sub(r"[.!?;:…]+$", "", text)
+    return text.strip(" \t\r\n\"'“”‘’«».,!?;:…")
+
+
+def _clean_english_word(text: str) -> str:
+    # English captions must not contain Cyrillic, CJK or mojibake leftovers.
+    text = re.sub(r"[\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F]+", "", text)
+    text = re.sub(r"[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]+", "", text)
+    text = re.sub(r"[^A-Za-z0-9'’\-]+", "", text)
+    text = text.replace("’", "'").strip("'-")
+    if len(text) == 1 and not text.isalnum():
+        return ""
     return text
+
+
+def _clean_russian_word(text: str) -> str:
+    # Russian captions stay Cyrillic-only except digits. This removes accidental
+    # English words and CJK hallucinations without adding slow spellchecking.
+    text = text.replace("ё", "е").replace("Ё", "Е")
+    text = re.sub(r"[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]+", "", text)
+    text = re.sub(r"[^А-Яа-я0-9\-]+", "", text).strip("-")
+    return _apply_russian_light_corrections(text)
+
+
+def _clean_mixed_word(text: str) -> str:
+    text = re.sub(r"[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF]+", "", text)
+    text = re.sub(r"[^A-Za-zА-Яа-я0-9'’\-\s]+", "", text)
+    return re.sub(r"\s+", " ", text).strip(" '-")
+
+
+def _apply_russian_light_corrections(text: str) -> str:
+    if not text:
+        return ""
+    corrections = {
+        "щас": "сейчас",
+        "ща": "сейчас",
+        "чо": "что",
+        "че": "что",
+        "чё": "что",
+        "шо": "что",
+        "вообщем": "вообще",
+        "вобщем": "вообще",
+        "кароче": "короче",
+        "короч": "короче",
+        "блять": "блин",
+        "бля": "блин",
+    }
+    lowered = text.lower()
+    fixed = corrections.get(lowered)
+    if fixed is None:
+        return text
+    if text.isupper():
+        return fixed.upper()
+    if text[:1].isupper():
+        return fixed.capitalize()
+    return fixed
 
 
 def generate_word_subtitles(
@@ -80,7 +176,7 @@ def generate_word_subtitles(
         if adj_end <= 0:
             continue  # Before clip start
 
-        cleaned = clean_text(word)
+        cleaned = clean_text(word, config.language)
         if not cleaned:
             continue
 

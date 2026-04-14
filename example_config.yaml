@@ -108,7 +108,7 @@ highlight_report_path: "highlight_report.json"
 
 # Export settings
 export:
-  render_preset: "balanced"  # fast | balanced | quality | small | nvenc_fast | custom
+  render_preset: "quality"  # fast | balanced | quality | small | nvenc_fast | custom
   width: 1080
   height: 1920
   fps: 30
