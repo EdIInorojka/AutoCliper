@@ -102,6 +102,9 @@ def cli_entry():
             f"(language={config.language}, theme={config.subtitles_theme}, position={config.subtitles_position})"
         )
         console.print(f"Webcam detection: {config.webcam_detection}")
+        console.print(f"Manual webcam crop: {config.manual_webcam_crop or 'none'}")
+        console.print(f"Manual slot crop: {config.manual_slot_crop or 'none'}")
+        console.print(f"Layout debug preview: {config.layout_debug_preview}")
         console.print(f"Music: {config.music.enabled}")
         console.print(f"CTA: {config.cta.enabled} (language={config.cta.language})")
         console.print(f"CTA voice: {config.cta.voice_mp3_path or 'none'}")

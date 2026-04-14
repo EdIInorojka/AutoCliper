@@ -61,8 +61,10 @@ def run_pipeline(config: AppConfig) -> None:
 
     # Step 4: Main content / slot detection
     console.print("\n[step 4] Detecting main content...")
-    from app.content_detector import detect_content_area
+    from app.content_detector import detect_content_area, write_layout_debug_preview
     content_result = detect_content_area(video_path, video_info, webcam_result, config)
+    if config.debug:
+        write_layout_debug_preview(video_path, webcam_result, content_result, config)
 
     # Step 5: Layout computation
     console.print("\n[step 5] Computing layout...")

@@ -25,6 +25,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.cta.typewriter_speed, 0.16)
         self.assertEqual(config.whisper_model_cache_dir, "models/whisper")
         self.assertEqual(config.webcam_edge_margin_ratio, 0.15)
+        self.assertIsNone(config.manual_webcam_crop)
+        self.assertIsNone(config.manual_slot_crop)
+        self.assertEqual(config.layout_debug_preview, "layout_debug_preview.jpg")
 
     def test_load_example_config(self):
         from app.config import load_config, AppConfig
@@ -408,6 +411,85 @@ class TestWebcamDetector(unittest.TestCase):
             best_iou = max(self._iou(c, expected) for c in candidates)
             self.assertGreater(best_iou, 0.45, (frame_w, frame_h, expected, best_iou))
 
+    def test_webcam_candidates_scan_full_left_and_right_sides(self):
+        from app.webcam_detector import _generate_webcam_candidates
+
+        candidates = _generate_webcam_candidates(1920, 1080, 0.15)
+        side_y_centers = [
+            y + h / 2
+            for x, y, w, h in candidates
+            if x <= 1920 * 0.24 or x + w >= 1920 * 0.76
+        ]
+
+        self.assertTrue(any(cy < 1080 * 0.20 for cy in side_y_centers))
+        self.assertTrue(any(1080 * 0.40 <= cy <= 1080 * 0.60 for cy in side_y_centers))
+        self.assertTrue(any(cy > 1080 * 0.80 for cy in side_y_centers))
+
+    def test_webcam_manual_override_has_priority(self):
+        from unittest.mock import patch
+        import numpy as np
+        from app.config import AppConfig
+        from app.webcam_detector import detect_webcam
+
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        config = AppConfig()
+        config.manual_webcam_crop = [101, 203, 321, 181]
+
+        with (
+            patch("app.webcam_detector._ensure_opencv", return_value=True),
+            patch("app.webcam_detector._extract_frames", return_value=[frame, frame, frame]),
+        ):
+            result = detect_webcam("dummy.mp4", config)
+
+        self.assertTrue(result.has_webcam)
+        self.assertEqual((result.region.x, result.region.y, result.region.w, result.region.h), (101, 203, 320, 180))
+
+    def test_webcam_detection_can_select_right_top_overlay(self):
+        from unittest.mock import patch
+        import numpy as np
+        from app.config import AppConfig
+        from app.webcam_detector import detect_webcam
+
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        faces = [(1030, 80, 70, 70)]
+
+        with (
+            patch("app.webcam_detector._ensure_opencv", return_value=True),
+            patch("app.webcam_detector._extract_frames", return_value=[frame, frame, frame]),
+            patch("app.webcam_detector._detect_face_boxes", return_value=faces),
+            patch("app.webcam_detector._find_stable_regions", return_value={}),
+            patch("app.webcam_detector._compute_edge_density_scores", return_value=np.zeros((11, 20))),
+            patch("app.webcam_detector._webcam_boundary_contrast_score", return_value=0.0),
+        ):
+            result = detect_webcam("dummy.mp4", AppConfig())
+
+        self.assertTrue(result.has_webcam)
+        self.assertGreater(result.region.x, 1280 * 0.55)
+        self.assertLess(result.region.y, 720 * 0.20)
+
+    def test_webcam_detection_can_select_left_bottom_overlay(self):
+        from unittest.mock import patch
+        import numpy as np
+        from app.config import AppConfig
+        from app.webcam_detector import detect_webcam
+
+        frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+        faces = [(75, 575, 70, 70)]
+
+        with (
+            patch("app.webcam_detector._ensure_opencv", return_value=True),
+            patch("app.webcam_detector._extract_frames", return_value=[frame, frame, frame]),
+            patch("app.webcam_detector._detect_face_boxes", return_value=faces),
+            patch("app.webcam_detector._find_stable_regions", return_value={}),
+            patch("app.webcam_detector._compute_edge_density_scores", return_value=np.zeros((11, 20))),
+            patch("app.webcam_detector._webcam_boundary_contrast_score", return_value=0.0),
+        ):
+            result = detect_webcam("dummy.mp4", AppConfig())
+
+        self.assertTrue(result.has_webcam)
+        self.assertLess(result.region.x, 1280 * 0.20)
+        self.assertGreater(result.region.y, 720 * 0.50)
+
     def test_webcam_refinement_trims_slot_and_bottom_ui_strips(self):
         import numpy as np
         from app.webcam_detector import _refine_webcam_region
@@ -557,21 +639,13 @@ class TestContentDetector(unittest.TestCase):
         self.assertEqual(result.crop, centered_content_crop(1920, 1080))
         self.assertEqual(result.reason, "centered")
 
-    def test_profile_content_candidates_cover_user_layouts(self):
+    def test_content_candidates_do_not_cut_slot_around_webcam(self):
         from app.content_detector import _content_candidates
 
-        refs = [
-            (1182, 664, (0, 288, 314, 176), "profile_left_webcam_slot"),
-            (1181, 663, (965, 3, 213, 150), "profile_small_top_right_overlay"),
-            (1177, 666, (782, 18, 381, 216), "profile_large_top_right_rail"),
-            (1176, 660, (913, 196, 263, 160), "profile_mid_right_overlay"),
-            (1181, 665, (817, 431, 361, 215), "profile_bottom_right_webcam_slot"),
-        ]
+        candidates = _content_candidates(1182, 664, (0, 288, 314, 176))
 
-        for frame_w, frame_h, webcam, reason_prefix in refs:
-            candidates = _content_candidates(frame_w, frame_h, webcam)
-            raw = next((crop for crop, reason in candidates if reason == reason_prefix), None)
-            self.assertIsNotNone(raw, reason_prefix)
+        self.assertFalse(any(reason in {"right_of_webcam", "profile_left_webcam_slot"} for _, reason in candidates))
+        self.assertTrue(any(reason.startswith("profile_ref_") for _, reason in candidates))
 
     def test_reference_profiles_cover_annotated_layouts(self):
         from app.content_detector import _reference_profile_candidates
@@ -600,6 +674,36 @@ class TestContentDetector(unittest.TestCase):
         slot = next(crop for crop, reason in candidates if reason == "profile_ref_stake_left_overlay")
 
         self.assertLess(slot[0], webcam[0] + webcam[2])
+
+    def test_active_content_candidates_can_shift_left_or_right(self):
+        import numpy as np
+        from app.content_detector import _active_content_candidates
+
+        activity = np.zeros((12, 20), dtype=np.float32)
+        activity[2:9, 1:9] = 1.0
+        left_candidate = _active_content_candidates(1920, 1080, activity)[0][0]
+
+        activity = np.zeros((12, 20), dtype=np.float32)
+        activity[2:9, 11:19] = 1.0
+        right_candidate = _active_content_candidates(1920, 1080, activity)[0][0]
+
+        self.assertLess(left_candidate[0], 1920 * 0.20)
+        self.assertGreater(right_candidate[0], 1920 * 0.40)
+
+    def test_content_manual_override_has_priority(self):
+        from app.content_detector import detect_content_area
+        from app.config import AppConfig
+        from app.probe import VideoInfo
+        from app.webcam_types import WebcamDetectionResult
+
+        config = AppConfig()
+        config.manual_slot_crop = [11, 22, 333, 222]
+        info = VideoInfo("test.mp4", 60, 30, 1280, 720, [])
+
+        result = detect_content_area("missing.mp4", info, WebcamDetectionResult(False), config)
+
+        self.assertEqual(result.crop, (11, 22, 332, 222))
+        self.assertEqual(result.reason, "manual_slot_crop")
 
 
 class TestHighlightDetector(unittest.TestCase):

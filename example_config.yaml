@@ -27,6 +27,10 @@ whisper_model_cache_dir: "models/whisper"
 # Webcam detection
 webcam_detection: "auto"
 webcam_edge_margin_ratio: 0.15
+# Optional manual fallback crops: [x, y, width, height] in source-video pixels.
+manual_webcam_crop:
+manual_slot_crop:
+layout_debug_preview: "layout_debug_preview.jpg"
 webcam_top_ratio: 0.33
 content_bottom_ratio: 0.67
 

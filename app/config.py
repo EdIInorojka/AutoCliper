@@ -130,6 +130,9 @@ class AppConfig:
     whisper_model_cache_dir: str = "models/whisper"
     webcam_detection: str = "auto"
     webcam_edge_margin_ratio: float = 0.15
+    manual_webcam_crop: Optional[List[int]] = None
+    manual_slot_crop: Optional[List[int]] = None
+    layout_debug_preview: str = "layout_debug_preview.jpg"
     webcam_top_ratio: float = 0.33
     content_bottom_ratio: float = 0.67
     highlight_target_count_per_hour: int = 15

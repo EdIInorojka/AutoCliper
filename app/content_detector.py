@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from app.config import AppConfig
@@ -80,13 +81,13 @@ def detect_content_area(
     """
     src_w = int(video_info.width)
     src_h = int(video_info.height)
+    manual_crop = _manual_crop_from_config(config, "manual_slot_crop", src_w, src_h)
+    if manual_crop is not None:
+        console.print(f"[cyan]Content manual override: {manual_crop}[/cyan]")
+        return ContentDetectionResult(True, manual_crop, 1.0, "manual_slot_crop")
+
     webcam_crop = _webcam_crop(webcam_result)
     fallback_crop, fallback_reason = _fallback_content_crop(src_w, src_h)
-    if webcam_crop is None:
-        console.print(
-            f"[cyan]Content crop: {fallback_crop}, confidence=0.50, reason={fallback_reason}[/cyan]"
-        )
-        return ContentDetectionResult(True, fallback_crop, 0.50, fallback_reason)
 
     try:
         import cv2
@@ -100,7 +101,7 @@ def detect_content_area(
         return ContentDetectionResult(True, fallback_crop, 0.35, fallback_reason)
 
     activity = _activity_map(cv2, np, frames)
-    candidates = _content_candidates(src_w, src_h, webcam_crop)
+    candidates = _content_candidates(src_w, src_h, webcam_crop, activity)
     if not candidates:
         return ContentDetectionResult(True, fallback_crop, 0.35, fallback_reason)
 
@@ -111,9 +112,11 @@ def detect_content_area(
         crop = raw_crop
         score = _score_crop(np, activity, crop, src_w, src_h)
         if reason.startswith("profile_ref_"):
-            score += 0.18
+            score += 0.04
         elif reason.startswith("profile_"):
-            score += 0.10
+            score += 0.02
+        elif reason.startswith("active_"):
+            score += 0.12
         if score > best_score:
             best_score = score
             best_crop = crop
@@ -201,6 +204,7 @@ def _content_candidates(
     src_w: int,
     src_h: int,
     webcam_crop: Optional[tuple[int, int, int, int]],
+    activity: Any | None = None,
 ) -> list[tuple[tuple[int, int, int, int], str]]:
     crops: list[tuple[tuple[int, int, int, int], str]] = []
 
@@ -214,21 +218,17 @@ def _content_candidates(
     add(src_w * 0.15, src_h * 0.08, src_w * 0.78, src_h * 0.78, "center_right_slot")
     add(src_w * 0.22, src_h * 0.10, src_w * 0.74, src_h * 0.76, "sidebar_trim_slot")
     add(src_w * 0.05, src_h * 0.12, src_w * 0.90, src_h * 0.70, "wide_game")
+    add(src_w * 0.00, src_h * 0.06, src_w * 0.76, src_h * 0.80, "left_weighted_game")
+    add(src_w * 0.12, src_h * 0.06, src_w * 0.76, src_h * 0.80, "center_weighted_game")
+    add(src_w * 0.24, src_h * 0.06, src_w * 0.76, src_h * 0.80, "right_weighted_game")
+    add(src_w * 0.02, src_h * 0.02, src_w * 0.82, src_h * 0.72, "upper_left_game")
+    add(src_w * 0.16, src_h * 0.02, src_w * 0.82, src_h * 0.72, "upper_right_game")
+    add(src_w * 0.02, src_h * 0.20, src_w * 0.82, src_h * 0.72, "lower_left_game")
+    add(src_w * 0.16, src_h * 0.20, src_w * 0.82, src_h * 0.72, "lower_right_game")
+    for crop, reason in _active_content_candidates(src_w, src_h, activity):
+        add(*crop, reason)
     for crop, reason in _profile_content_candidates(src_w, src_h, webcam_crop):
         add(*crop, reason)
-
-    if webcam_crop is not None:
-        wx, wy, ww, wh = webcam_crop
-        # Add edge-aware candidates on the opposite side of the webcam. These
-        # are generic and work for left/right/top/bottom overlays.
-        if wx + ww / 2 < src_w / 2:
-            add(wx + ww + src_w * 0.015, src_h * 0.06, src_w - (wx + ww) - src_w * 0.035, src_h * 0.84, "right_of_webcam")
-        else:
-            add(src_w * 0.02, src_h * 0.06, wx - src_w * 0.035, src_h * 0.84, "left_of_webcam")
-        if wy + wh / 2 < src_h / 2:
-            add(src_w * 0.04, wy + wh + src_h * 0.015, src_w * 0.92, src_h - (wy + wh) - src_h * 0.04, "below_webcam")
-        else:
-            add(src_w * 0.04, src_h * 0.04, src_w * 0.92, wy - src_h * 0.035, "above_webcam")
 
     unique: list[tuple[tuple[int, int, int, int], str]] = []
     seen = set()
@@ -237,6 +237,48 @@ def _content_candidates(
             seen.add(crop)
             unique.append((crop, reason))
     return unique
+
+
+def _active_content_candidates(
+    src_w: int,
+    src_h: int,
+    activity: Any | None,
+) -> list[tuple[tuple[float, float, float, float], str]]:
+    if activity is None:
+        return []
+    try:
+        import numpy as np
+    except ImportError:
+        return []
+    if not hasattr(activity, "size") or activity.size == 0:
+        return []
+
+    candidates: list[tuple[tuple[float, float, float, float], str]] = []
+    grid_h, grid_w = activity.shape
+    cell_w = src_w / max(1, grid_w)
+    cell_h = src_h / max(1, grid_h)
+
+    for quantile, pad_cells, reason in (
+        (0.55, 2, "active_broad_game"),
+        (0.70, 2, "active_core_game"),
+        (0.82, 1, "active_hot_game"),
+    ):
+        threshold = max(float(np.mean(activity) + np.std(activity) * 0.20), float(np.quantile(activity, quantile)))
+        points = np.argwhere(activity >= threshold)
+        if points.size == 0:
+            continue
+        gy1 = max(0, int(np.min(points[:, 0])) - pad_cells)
+        gy2 = min(grid_h, int(np.max(points[:, 0])) + 1 + pad_cells)
+        gx1 = max(0, int(np.min(points[:, 1])) - pad_cells)
+        gx2 = min(grid_w, int(np.max(points[:, 1])) + 1 + pad_cells)
+        x = gx1 * cell_w
+        y = gy1 * cell_h
+        w = (gx2 - gx1) * cell_w
+        h = (gy2 - gy1) * cell_h
+        if w * h >= src_w * src_h * 0.18:
+            candidates.append(((x, y, w, h), reason))
+
+    return candidates
 
 
 def _score_crop(np: Any, activity, crop: tuple[int, int, int, int], src_w: int, src_h: int) -> float:
@@ -253,7 +295,8 @@ def _score_crop(np: Any, activity, crop: tuple[int, int, int, int], src_w: int, 
     center_x = x + w / 2
     center_y = y + h / 2
     center_penalty = (abs(center_x - src_w / 2) / src_w) + (abs(center_y - src_h / 2) / src_h) * 0.5
-    return activity_score * 0.62 + area_score * 0.30 - center_penalty * 0.18
+    wide_bonus = 0.08 if w >= src_w * 0.60 and h >= src_h * 0.45 else 0.0
+    return activity_score * 0.66 + area_score * 0.28 + wide_bonus - center_penalty * 0.08
 
 
 def _profile_content_candidates(
@@ -280,27 +323,6 @@ def _profile_content_candidates(
 
     crops: list[tuple[tuple[float, float, float, float], str]] = []
     crops.extend(_reference_profile_candidates(src_w, src_h, webcam_crop))
-
-    wx, wy, ww, wh = webcam_crop
-    margin = max(src_w, src_h) * 0.015
-    wc_center_x = wx + ww / 2
-    wc_center_y = wy + wh / 2
-
-    if wx <= src_w * 0.12 and src_h * 0.25 <= wc_center_y <= src_h * 0.78:
-        left = max(src_w * 0.22, wx + ww + margin)
-        crops.append(((left, src_h * 0.09, src_w - left - src_w * 0.02, src_h * 0.78), "profile_left_webcam_slot"))
-
-    if wx + ww >= src_w * 0.80 and wy <= src_h * 0.16:
-        if ww >= src_w * 0.26:
-            crops.append(((src_w * 0.04, src_h * 0.08, max(src_w * 0.45, wx - src_w * 0.05), src_h * 0.70), "profile_large_top_right_rail"))
-        else:
-            crops.append(((src_w * 0.12, src_h * 0.08, src_w * 0.84, src_h * 0.84), "profile_small_top_right_overlay"))
-
-    if wx + ww >= src_w * 0.85 and src_h * 0.20 < wc_center_y < src_h * 0.72:
-        crops.append(((src_w * 0.16, src_h * 0.10, max(src_w * 0.45, wx - src_w * 0.18), src_h * 0.76), "profile_mid_right_overlay"))
-
-    if wx + ww >= src_w * 0.85 and wy >= src_h * 0.55:
-        crops.append(((0, src_h * 0.08, max(src_w * 0.55, wx - margin), src_h * 0.78), "profile_bottom_right_webcam_slot"))
 
     return crops
 
@@ -394,6 +416,99 @@ def _adjust_crop_for_webcam_overlap(
         return crop, "overlap_kept"
     _, best_crop, reason = max(candidates, key=lambda item: item[0])
     return best_crop, reason
+
+
+def write_layout_debug_preview(
+    video_path: str,
+    webcam_result: WebcamDetectionResult,
+    content_result: ContentDetectionResult,
+    config: AppConfig,
+) -> Optional[str]:
+    try:
+        import cv2
+    except ImportError:
+        return None
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, min(total_frames - 1, total_frames // 6)))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok or frame is None:
+        return None
+
+    sx, sy, sw, sh = content_result.crop
+    cv2.rectangle(frame, (sx, sy), (sx + sw, sy + sh), (60, 60, 255), 4)
+    cv2.putText(
+        frame,
+        f"slot {content_result.confidence:.2f} {content_result.reason}",
+        (max(0, sx), max(26, sy - 12)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (60, 60, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    if webcam_result.has_webcam and webcam_result.region is not None:
+        wr = webcam_result.region
+        cv2.rectangle(frame, (wr.x, wr.y), (wr.x + wr.w, wr.y + wr.h), (60, 220, 60), 4)
+        cv2.putText(
+            frame,
+            f"webcam {webcam_result.confidence:.2f}",
+            (max(0, wr.x), max(26, wr.y - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (60, 220, 60),
+            2,
+            cv2.LINE_AA,
+        )
+    else:
+        cv2.putText(
+            frame,
+            "webcam not detected",
+            (24, 36),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.9,
+            (60, 220, 220),
+            2,
+            cv2.LINE_AA,
+        )
+
+    out_name = config.layout_debug_preview or "layout_debug_preview.jpg"
+    out_path = Path(out_name)
+    if not out_path.is_absolute():
+        out_path = Path(config.output_dir) / out_path
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ok, encoded = cv2.imencode(".jpg", frame)
+    if not ok:
+        return None
+    encoded.tofile(str(out_path))
+    console.print(f"[cyan]Layout debug preview: {out_path}[/cyan]")
+    return str(out_path)
+
+
+def _manual_crop_from_config(
+    config: AppConfig,
+    field_name: str,
+    src_w: int,
+    src_h: int,
+) -> Optional[tuple[int, int, int, int]]:
+    raw = getattr(config, field_name, None)
+    if not raw:
+        return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        console.print(f"[yellow]Ignoring invalid {field_name}; expected [x, y, w, h][/yellow]")
+        return None
+    try:
+        x, y, w, h = (int(v) for v in raw)
+    except (TypeError, ValueError):
+        console.print(f"[yellow]Ignoring invalid {field_name}; crop values must be integers[/yellow]")
+        return None
+    return _clamp_even_crop(x, y, w, h, src_w, src_h)
 
 
 def _clamp_even_crop(

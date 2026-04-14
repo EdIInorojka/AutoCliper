@@ -9,7 +9,7 @@ Use it only with content that you have the right to process. StreamCuter does no
 - Local MP4 input as the primary path.
 - YouTube/Kick URL ingest through `yt-dlp` when the URL is supported by yt-dlp.
 - `ffprobe` metadata analysis: duration, FPS, resolution, audio streams.
-- Webcam detection with OpenCV Haar face cascades plus stability/edge heuristics.
+- Webcam detection with MediaPipe when available, OpenCV Haar fallback, and edge/contrast/stability heuristics across the full left/right stream rails.
 - Vertical layout:
   - webcam detected: webcam panel on top, main content below;
   - no webcam: full vertical smart crop/fill path.
@@ -110,7 +110,7 @@ Important fields:
 - `language`: `auto`, `ru`, or `en`.
 - `subtitles_enabled`, `subtitles_mode`, `subtitles_position`, `subtitles_theme`, `subtitles_font_name`, `subtitles_font_path`, `subtitles_template_ru`, `subtitles_template_en`.
 - `whisper_model_cache_dir`: persistent faster-whisper model cache; default `models/whisper`.
-- `webcam_detection`, `webcam_edge_margin_ratio`, `webcam_top_ratio`, `content_bottom_ratio`.
+- `webcam_detection`, `webcam_edge_margin_ratio`, `manual_webcam_crop`, `manual_slot_crop`, `layout_debug_preview`, `webcam_top_ratio`, `content_bottom_ratio`.
 - `highlight_target_count_per_hour`, `min_clip_duration_sec`, `preferred_clip_duration_sec`, `max_clip_duration_sec`, `hard_max_clip_duration_sec`.
 - `cta.enabled`, `cta.trigger_range_sec`, `cta.freeze_duration_sec`, `cta.text_en`, `cta.text_ru`, `cta.language`, `cta.font_path`, `cta.voice_mp3_path`.
 - When `cta.voice_mp3_path` points to an existing audio file, the CTA freeze duration follows that file's duration; if the file is missing, `cta.freeze_duration_sec` is used.
@@ -192,7 +192,8 @@ Do not run the video renderer inside Vercel/serverless. ffmpeg rendering and ASR
 - First ASR run is slow: faster-whisper downloads the model once.
 - Background music is disabled by default. Use `--music` or set `music.enabled: true` to opt in.
 - Word-by-word subtitles use `subtitles/ru.ass` or `subtitles/en.ass` as the ASS style template depending on the selected language.
-- If webcam is not detected, the main content is centered with a blurred fill and subtitles move to the top-safe position.
+- If webcam is not detected, the main content uses the best active slot crop with a blurred fill and subtitles move to the top-safe position.
+- Set `debug: true` to save a layout preview with a green webcam box and red slot box. If a rare stream still needs correction, set `manual_webcam_crop` or `manual_slot_crop` to `[x, y, width, height]` in source-video pixels.
 - `--delete-input-after-success` removes the source video only after output clips are created. Use it carefully for local files.
 - No music files with music enabled: the pipeline logs it and continues without background music.
 - No CTA voice file: the pipeline continues without voiceover.

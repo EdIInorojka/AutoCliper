@@ -98,6 +98,16 @@ def _extract_frames(video_path: str, num_frames: int = 10, max_time_sec: float =
 
 
 def _detect_face_boxes(frames: list[Any]) -> list[tuple[int, int, int, int]]:
+    mediapipe_boxes = _detect_face_boxes_mediapipe(frames)
+    haar_boxes = _detect_face_boxes_haar(frames)
+    if mediapipe_boxes:
+        # MediaPipe is more stable for small streamer webcam panels; Haar stays
+        # as an additional fallback/evidence source when it is available.
+        return _dedupe_boxes(mediapipe_boxes + haar_boxes)
+    return _dedupe_boxes(haar_boxes)
+
+
+def _detect_face_boxes_haar(frames: list[Any]) -> list[tuple[int, int, int, int]]:
     cv2 = _OpenCV.cv2
     face_cascades = _OpenCV.face_cascades or []
     face_boxes: list[tuple[int, int, int, int]] = []
@@ -112,6 +122,64 @@ def _detect_face_boxes(frames: list[Any]) -> list[tuple[int, int, int, int]]:
                 face_boxes.append((int(fx), int(fy), int(fw), int(fh)))
 
     return face_boxes
+
+
+def _detect_face_boxes_mediapipe(frames: list[Any]) -> list[tuple[int, int, int, int]]:
+    cv2 = _OpenCV.cv2
+    try:
+        import mediapipe as mp  # type: ignore
+    except ImportError:
+        return []
+
+    face_boxes: list[tuple[int, int, int, int]] = []
+    try:
+        with mp.solutions.face_detection.FaceDetection(
+            model_selection=1,
+            min_detection_confidence=0.35,
+        ) as detector:
+            for frame in frames:
+                h, w = frame.shape[:2]
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                result = detector.process(rgb)
+                detections = getattr(result, "detections", None) or []
+                for detection in detections:
+                    rel = detection.location_data.relative_bounding_box
+                    x = int(rel.xmin * w)
+                    y = int(rel.ymin * h)
+                    bw = int(rel.width * w)
+                    bh = int(rel.height * h)
+                    if bw >= 20 and bh >= 20:
+                        face_boxes.append(_clamp_even_roi((x, y, bw, bh), w, h))
+    except Exception as e:
+        console.print(f"[dim]MediaPipe face detector unavailable, using OpenCV fallback: {e}[/dim]")
+        return []
+
+    return face_boxes
+
+
+def _dedupe_boxes(
+    boxes: list[tuple[int, int, int, int]],
+    iou_threshold: float = 0.68,
+) -> list[tuple[int, int, int, int]]:
+    deduped: list[tuple[int, int, int, int]] = []
+    for box in boxes:
+        if any(_rect_iou(box, existing) >= iou_threshold for existing in deduped):
+            continue
+        deduped.append(box)
+    return deduped
+
+
+def _rect_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix1 = max(ax, bx)
+    iy1 = max(ay, by)
+    ix2 = min(ax + aw, bx + bw)
+    iy2 = min(ay + ah, by + bh)
+    if ix1 >= ix2 or iy1 >= iy2:
+        return 0.0
+    inter = (ix2 - ix1) * (iy2 - iy1)
+    return inter / float(max(1, aw * ah + bw * bh - inter))
 
 
 def _find_stable_regions(frames: list[Any]) -> dict[tuple[int, int, int, int], float]:
@@ -155,6 +223,16 @@ def detect_webcam(video_path: str, config: AppConfig | None = None) -> WebcamDet
         console.print("[yellow]Invalid frame dimensions, assuming no webcam[/yellow]")
         return WebcamDetectionResult(has_webcam=False)
 
+    manual_crop = _manual_crop_from_config(config, "manual_webcam_crop", w, h)
+    if manual_crop is not None:
+        rx, ry, rw, rh = manual_crop
+        console.print(f"[green]Webcam manual override: ({rx},{ry}) {rw}x{rh}[/green]")
+        return WebcamDetectionResult(
+            has_webcam=True,
+            region=WebcamRegion(x=rx, y=ry, w=rw, h=rh, confidence=1.0),
+            confidence=1.0,
+        )
+
     face_boxes = _detect_face_boxes(frames)
     stable_regions = _find_stable_regions(frames)
     edge_scores = _compute_edge_density_scores(frames)
@@ -168,90 +246,16 @@ def detect_webcam(video_path: str, config: AppConfig | None = None) -> WebcamDet
 
     for roi in webcam_candidates:
         rx, ry, rw, rh = roi
-        score = 0.0
-        reasons = []
-
-        face_count = _count_faces_in_roi(roi, face_boxes, w, h, edge_margin_ratio)
-        if face_count > 0:
-            face_score = min(0.75, 0.35 + face_count / 7.0)
-            score += face_score
-            reasons.append(f"faces={face_count}")
-            face_position_score, face_position_reason = _face_position_score(
-                roi, face_boxes, w, h, edge_margin_ratio
-            )
-            score += face_position_score
-            if face_position_reason:
-                reasons.append(face_position_reason)
-        else:
-            score -= 0.15
-
-        stab_score = _get_stability_in_roi(roi, stable_regions)
-        if stab_score > 0:
-            score += stab_score * 0.3
-            reasons.append(f"stability={stab_score:.2f}")
-
-        edge_score = _get_edge_score_in_roi(roi, edge_scores)
-        if edge_score > 0:
-            score += edge_score * 0.2
-            reasons.append(f"edges={edge_score:.2f}")
-
-        area_ratio = (rw * rh) / (w * h)
-        if 0.02 <= area_ratio <= 0.20:
-            score += 0.1
-            reasons.append(f"size_ok(area_ratio={area_ratio:.2f})")
-
-        aspect = rw / max(1, rh)
-        if 1.50 <= aspect <= 2.05:
-            score += 0.18
-            reasons.append("webcam_aspect_16_9")
-        elif 1.20 <= aspect < 1.50:
-            score += 0.04
-            reasons.append("webcam_aspect_4_3")
-        elif 0.90 <= aspect <= 1.12:
-            score -= 0.10
-            reasons.append("square_overlay_penalty")
-
-        if rw / w > 0.34:
-            score -= 0.22
-            reasons.append("large_overlay_penalty")
-        elif 0.18 <= rw / w <= 0.28:
-            score += 0.06
-            reasons.append("webcam_width_pref")
-        elif rw / w > 0.29:
-            score -= 0.08
-            reasons.append("wide_webcam_penalty")
-
-        proximity_score, proximity_reason = _edge_proximity_score(roi, w, h, edge_margin_ratio)
-        score += proximity_score
-        reasons.append(proximity_reason)
-
-        near_true_left = rx <= w * 0.08
-        near_true_right = rx + rw >= w * 0.92
-        side_mid = h * 0.25 <= (ry + rh / 2) <= h * 0.78
-        if (near_true_left or near_true_right) and side_mid:
-            score += 0.24
-            reasons.append("side_mid_edge")
-            width_ratio = rw / w
-            if 0.235 <= width_ratio <= 0.265:
-                score += 0.10
-                reasons.append("side_mid_width_pref")
-            elif 0.265 < width_ratio <= 0.31:
-                score += 0.03
-                reasons.append("side_mid_wide_ok")
-            elif width_ratio < 0.23:
-                score -= 0.06
-                reasons.append("side_mid_narrow_penalty")
-
-        if rx == 0 or rx + rw == w or ry == 0 or ry + rh == h:
-            score += 0.10
-            reasons.append("edge_contact")
-
-        if ry < h * 0.22 and not (near_true_left or near_true_right):
-            # Casino/slot VODs often have icons and decorative UI at the top
-            # that Haar cascades can mistake for faces. Penalize interior top HUD,
-            # but keep true edge webcams eligible.
-            score -= 0.45
-            reasons.append("top_hud_penalty")
+        score, reasons, face_count = _score_webcam_candidate(
+            frames,
+            roi,
+            face_boxes,
+            stable_regions,
+            edge_scores,
+            w,
+            h,
+            edge_margin_ratio,
+        )
 
         if score > best_score:
             best_score = score
@@ -259,7 +263,7 @@ def detect_webcam(video_path: str, config: AppConfig | None = None) -> WebcamDet
             best_face_count = face_count
             console.print(f"[dim]  Candidate ROI: ({rx},{ry}) {rw}x{rh}, score={score:.2f} [{', '.join(reasons)}][/dim]")
 
-    confidence = min(best_score / 1.1, 1.0)
+    confidence = min(best_score / 1.35, 1.0)
     has_webcam = confidence > 0.55 and best_face_count > 0
 
     if has_webcam and best_region is not None:
@@ -285,6 +289,170 @@ def detect_webcam(video_path: str, config: AppConfig | None = None) -> WebcamDet
 
     console.print(f"[yellow]No webcam overlay detected (best score: {best_score:.2f})[/yellow]")
     return WebcamDetectionResult(has_webcam=False, confidence=confidence)
+
+
+def _score_webcam_candidate(
+    frames: list[Any],
+    roi: tuple[int, int, int, int],
+    face_boxes: list[tuple[int, int, int, int]],
+    stable_regions: dict[tuple[int, int, int, int], float],
+    edge_scores: Any,
+    frame_w: int,
+    frame_h: int,
+    edge_margin_ratio: float,
+) -> tuple[float, list[str], int]:
+    rx, ry, rw, rh = roi
+    score = 0.0
+    reasons: list[str] = []
+
+    face_count = _count_faces_in_roi(roi, face_boxes, frame_w, frame_h, edge_margin_ratio)
+    if face_count > 0:
+        face_score = min(0.90, 0.42 + face_count / 6.0)
+        score += face_score
+        reasons.append(f"faces={face_count}")
+        face_position_score, face_position_reason = _face_position_score(
+            roi, face_boxes, frame_w, frame_h, edge_margin_ratio
+        )
+        score += face_position_score
+        if face_position_reason:
+            reasons.append(face_position_reason)
+    else:
+        score -= 0.45
+        reasons.append("no_face")
+
+    side_score, side_reason = _left_right_side_score(roi, frame_w, frame_h, edge_margin_ratio)
+    score += side_score
+    reasons.append(side_reason)
+
+    contrast_score = _webcam_boundary_contrast_score(frames, roi, frame_w, edge_margin_ratio)
+    if contrast_score > 0:
+        score += contrast_score * 0.26
+        reasons.append(f"boundary_contrast={contrast_score:.2f}")
+
+    stab_score = _get_stability_in_roi(roi, stable_regions)
+    if stab_score > 0:
+        score += stab_score * 0.24
+        reasons.append(f"stability={stab_score:.2f}")
+
+    edge_score = _get_edge_score_in_roi(roi, edge_scores)
+    if edge_score > 0:
+        score += edge_score * 0.14
+        reasons.append(f"edges={edge_score:.2f}")
+
+    area_ratio = (rw * rh) / max(1, frame_w * frame_h)
+    if 0.015 <= area_ratio <= 0.22:
+        score += 0.10
+        reasons.append(f"size_ok(area_ratio={area_ratio:.2f})")
+    else:
+        score -= 0.15
+        reasons.append(f"size_weak(area_ratio={area_ratio:.2f})")
+
+    aspect = rw / max(1, rh)
+    if 1.45 <= aspect <= 2.15:
+        score += 0.18
+        reasons.append("webcam_aspect_wide")
+    elif 1.15 <= aspect < 1.45:
+        score += 0.08
+        reasons.append("webcam_aspect_4_3")
+    elif 0.80 <= aspect < 1.15:
+        score += 0.02
+        reasons.append("webcam_aspect_square_ok")
+    else:
+        score -= 0.12
+        reasons.append("webcam_aspect_weak")
+
+    width_ratio = rw / max(1, frame_w)
+    if width_ratio > 0.38:
+        score -= 0.28
+        reasons.append("too_wide_overlay_penalty")
+    elif 0.16 <= width_ratio <= 0.32:
+        score += 0.08
+        reasons.append("webcam_width_ok")
+
+    if rx == 0 or rx + rw == frame_w:
+        score += 0.10
+        reasons.append("side_edge_contact")
+
+    return score, reasons, face_count
+
+
+def _left_right_side_score(
+    roi: tuple[int, int, int, int],
+    frame_w: int,
+    frame_h: int,
+    edge_margin_ratio: float,
+) -> tuple[float, str]:
+    rx, ry, rw, rh = roi
+    margin_x = frame_w * max(0.0, min(0.30, edge_margin_ratio))
+    side_depth = frame_w * 0.34
+    left_side = rx <= side_depth
+    right_side = rx + rw >= frame_w - side_depth
+    if left_side and right_side:
+        return -0.45, "too_wide_for_side_webcam"
+    if not (left_side or right_side):
+        return -0.38, "not_left_or_right_side"
+
+    score = 0.24
+    reason = "left_side_scan" if left_side else "right_side_scan"
+    if rx <= margin_x or rx + rw >= frame_w - margin_x:
+        score += 0.10
+        reason += "_near_edge"
+
+    center_y = ry + rh / 2
+    if 0 <= center_y <= frame_h:
+        score += 0.04
+    return score, reason
+
+
+def _webcam_boundary_contrast_score(
+    frames: list[Any],
+    roi: tuple[int, int, int, int],
+    frame_w: int,
+    edge_margin_ratio: float,
+) -> float:
+    cv2, np = _opencv_modules()
+    if cv2 is None or np is None or not frames:
+        return 0.0
+
+    frame = frames[min(len(frames) // 2, len(frames) - 1)]
+    rx, ry, rw, rh = roi
+    h, w = frame.shape[:2]
+    if rx < 0 or ry < 0 or rx + rw > w or ry + rh > h:
+        return 0.0
+
+    side_margin = frame_w * max(0.0, min(0.30, edge_margin_ratio))
+    near_left = rx <= side_margin or rx < frame_w * 0.18
+    near_right = rx + rw >= frame_w - side_margin or rx + rw > frame_w * 0.82
+    band = max(6, int(min(rw, rh) * 0.06))
+
+    inner = frame[ry : ry + rh, rx : rx + rw]
+    if near_left and rx + rw + band <= w:
+        outside = frame[ry : ry + rh, rx + rw : rx + rw + band]
+        inside_edge = inner[:, max(0, rw - band) : rw]
+    elif near_right and rx - band >= 0:
+        outside = frame[ry : ry + rh, rx - band : rx]
+        inside_edge = inner[:, 0 : min(band, rw)]
+    else:
+        return 0.0
+
+    if outside.size == 0 or inside_edge.size == 0:
+        return 0.0
+
+    color_distance = float(
+        np.linalg.norm(
+            inside_edge.reshape(-1, 3).mean(axis=0)
+            - outside.reshape(-1, 3).mean(axis=0)
+        )
+    )
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if near_left and rx + rw < w:
+        boundary_edge = float(np.mean(np.abs(gray[ry : ry + rh, rx + rw - 1].astype(np.float32) - gray[ry : ry + rh, rx + rw].astype(np.float32))))
+    elif near_right and rx > 0:
+        boundary_edge = float(np.mean(np.abs(gray[ry : ry + rh, rx].astype(np.float32) - gray[ry : ry + rh, rx - 1].astype(np.float32))))
+    else:
+        boundary_edge = 0.0
+
+    return min(1.0, color_distance / 85.0 + boundary_edge / 120.0)
 
 
 def _refine_webcam_region(
@@ -601,6 +769,28 @@ def _opencv_modules() -> tuple[Any | None, Any | None]:
     return cv2, np
 
 
+def _manual_crop_from_config(
+    config: AppConfig | None,
+    field_name: str,
+    frame_w: int,
+    frame_h: int,
+) -> tuple[int, int, int, int] | None:
+    if config is None:
+        return None
+    raw = getattr(config, field_name, None)
+    if not raw:
+        return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        console.print(f"[yellow]Ignoring invalid {field_name}; expected [x, y, w, h][/yellow]")
+        return None
+    try:
+        x, y, w, h = (int(v) for v in raw)
+    except (TypeError, ValueError):
+        console.print(f"[yellow]Ignoring invalid {field_name}; crop values must be integers[/yellow]")
+        return None
+    return _clamp_even_roi((x, y, w, h), frame_w, frame_h)
+
+
 def _clamp_even_roi(
     roi: tuple[int, int, int, int],
     frame_w: int,
@@ -621,8 +811,8 @@ def _generate_webcam_candidates(
     h: int,
     edge_margin_ratio: float = 0.15,
 ) -> list[tuple[int, int, int, int]]:
-    """Generate webcam candidates near every edge, allowing a small inset."""
-    edge_margin_ratio = max(0.0, min(0.25, float(edge_margin_ratio)))
+    """Generate webcam candidates across the full left/right overlay rails."""
+    edge_margin_ratio = max(0.0, min(0.30, float(edge_margin_ratio)))
     margin_x = int(w * edge_margin_ratio)
     margin_y = int(h * edge_margin_ratio)
 
@@ -652,22 +842,23 @@ def _generate_webcam_candidates(
             candidates.append(roi)
 
     for pw, ph in sizes:
-        step_x = max(24, int(w * 0.04))
-        step_y = max(24, int(h * 0.04))
-        x_scan = list(range(0, max(1, w - pw + 1), step_x))
+        step_x = max(24, int(w * 0.035))
+        step_y = max(18, int(h * 0.035))
+        side_depth = max(margin_x, int(w * 0.24))
+        left_x_scan = list(range(0, max(1, min(side_depth, w - pw) + 1), step_x))
+        right_start = max(0, w - pw - side_depth)
+        right_x_scan = list(range(right_start, max(right_start + 1, w - pw + 1), step_x))
         y_scan = list(range(0, max(1, h - ph + 1), step_y))
-        if not x_scan or x_scan[-1] != w - pw:
-            x_scan.append(w - pw)
+        if 0 not in left_x_scan:
+            left_x_scan.insert(0, 0)
+        if margin_x <= w - pw:
+            left_x_scan.append(margin_x)
+        if w - pw - margin_x >= 0:
+            right_x_scan.append(w - pw - margin_x)
+        right_x_scan.append(w - pw)
         if not y_scan or y_scan[-1] != h - ph:
             y_scan.append(h - ph)
 
-        x_positions = [
-            0,
-            margin_x,
-            (w - pw) // 2,
-            w - pw - margin_x,
-            w - pw,
-        ]
         y_positions = [
             0,
             margin_y,
@@ -676,29 +867,9 @@ def _generate_webcam_candidates(
             h - ph,
         ]
 
-        for x in x_positions:
-            add(x, 0, pw, ph)
-            add(x, margin_y, pw, ph)
-            add(x, h - ph - margin_y, pw, ph)
-            add(x, h - ph, pw, ph)
-
-        for y in y_positions:
-            add(0, y, pw, ph)
-            add(margin_x, y, pw, ph)
-            add(w - pw - margin_x, y, pw, ph)
-            add(w - pw, y, pw, ph)
-
-        for y in y_scan:
-            add(0, y, pw, ph)
-            add(margin_x, y, pw, ph)
-            add(w - pw - margin_x, y, pw, ph)
-            add(w - pw, y, pw, ph)
-
-        for x in x_scan:
-            add(x, 0, pw, ph)
-            add(x, margin_y, pw, ph)
-            add(x, h - ph - margin_y, pw, ph)
-            add(x, h - ph, pw, ph)
+        for y in y_scan + y_positions:
+            for x in left_x_scan + right_x_scan:
+                add(x, y, pw, ph)
 
     return candidates
 
@@ -757,11 +928,11 @@ def _face_position_score(
     rel_y = sorted((cy - ry) / max(1, rh) for _, cy in centers)[len(centers) // 2]
 
     if near_left or near_right:
-        if rel_y < 0.30 or rel_y > 0.84:
-            return -0.28, f"face_near_panel_edge(rel_y={rel_y:.2f})"
-        if 0.40 <= rel_y <= 0.75:
-            return 0.18, f"face_centered_y(rel_y={rel_y:.2f})"
-        return -0.08, f"face_weak_y(rel_y={rel_y:.2f})"
+        if rel_y < 0.08 or rel_y > 0.92:
+            return -0.18, f"face_near_panel_edge(rel_y={rel_y:.2f})"
+        if 0.22 <= rel_y <= 0.82:
+            return 0.16, f"face_valid_y(rel_y={rel_y:.2f})"
+        return 0.04, f"face_edge_y_ok(rel_y={rel_y:.2f})"
 
     if near_top or near_bottom:
         if rel_x < 0.12 or rel_x > 0.88:
@@ -800,9 +971,9 @@ def _matching_face_centers(
         face_cx = face_x + face_w / 2
         face_cy = face_y + face_h / 2
         center_inside = rx <= face_cx <= rx + rw and ry <= face_cy <= ry + rh
-        if near_left and not near_right and face_cx > rx + rw * 0.78:
+        if near_left and not near_right and face_cx > rx + rw * 0.90:
             continue
-        if near_right and not near_left and face_cx < rx + rw * 0.22:
+        if near_right and not near_left and face_cx < rx + rw * 0.10:
             continue
         if near_top and not near_bottom and not (near_left or near_right) and face_cy > ry + rh * 0.78:
             continue
@@ -865,7 +1036,9 @@ def _get_edge_score_in_roi(
     roi: tuple[int, int, int, int],
     edge_map,
 ) -> float:
-    np = _OpenCV.np
+    _, np = _opencv_modules()
+    if np is None:
+        return 0.0
     if edge_map.size == 0:
         return 0.0
 
