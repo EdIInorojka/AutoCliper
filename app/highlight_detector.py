@@ -110,12 +110,14 @@ def find_highlights(
     except Exception as e:
         console.print(f"[yellow]Audio extraction failed, using fallback highlights: {e}[/yellow]")
         segments = _fallback_highlights(video_info, config)
+        segments = _apply_duration_variation(segments, video_info, config)
         _save_highlight_cache(config, video_path, cache_extra, segments)
         return segments
 
     if not os.path.exists(audio_path):
         console.print("[yellow]Audio extraction failed, using fallback highlights[/yellow]")
         segments = _fallback_highlights(video_info, config)
+        segments = _apply_duration_variation(segments, video_info, config)
         _save_highlight_cache(config, video_path, cache_extra, segments)
         return segments
 
@@ -126,6 +128,7 @@ def find_highlights(
     except ImportError:
         console.print("[yellow]numpy not installed; using fallback highlights[/yellow]")
         segments = _fallback_highlights(video_info, config)
+        segments = _apply_duration_variation(segments, video_info, config)
         _save_highlight_cache(config, video_path, cache_extra, segments)
         return segments
 
@@ -135,6 +138,7 @@ def find_highlights(
     except ImportError:
         console.print("[yellow]librosa/scipy not installed; using fallback highlights[/yellow]")
         segments = _fallback_highlights(video_info, config)
+        segments = _apply_duration_variation(segments, video_info, config)
         _save_highlight_cache(config, video_path, cache_extra, segments)
         return segments
 
@@ -242,6 +246,7 @@ def find_highlights(
     if not candidates:
         console.print("[yellow]No strong peaks found, using fallback highlights[/yellow]")
         segments = _fallback_highlights(video_info, config)
+        segments = _apply_duration_variation(segments, video_info, config)
         _save_highlight_cache(config, video_path, cache_extra, segments)
         return segments
 
@@ -250,6 +255,7 @@ def find_highlights(
     if not segments:
         console.print("[yellow]All candidates overlapped, using fallback highlights[/yellow]")
         segments = _fallback_highlights(video_info, config)
+        segments = _apply_duration_variation(segments, video_info, config)
         _save_highlight_cache(config, video_path, cache_extra, segments)
         return segments
 
@@ -273,6 +279,7 @@ def find_highlights(
                 "non-overlapping windows fit this video[/yellow]"
             )
 
+    segments = _apply_duration_variation(segments, video_info, config)
     console.print(f"[green]Found {len(segments)} highlight segments[/green]")
     _save_highlight_cache(config, video_path, cache_extra, segments)
     return segments
@@ -311,7 +318,7 @@ def _highlight_cache_extra(
     asr_words: Optional[list[dict]],
 ) -> dict[str, Any]:
     return {
-        "version": 2,
+        "version": 3,
         "duration": round(float(video_info.duration_sec or 0.0), 3),
         "clips": config.clips_override,
         "target_per_hour": config.highlight_target_count_per_hour,
@@ -319,6 +326,13 @@ def _highlight_cache_extra(
         "preferred": config.preferred_clip_duration_sec,
         "max": config.max_clip_duration_sec,
         "hard_max": config.hard_max_clip_duration_sec,
+        "duration_variation": bool(
+            getattr(getattr(config, "variation", None), "enabled", False)
+            and getattr(getattr(config, "variation", None), "clip_duration_variation", True)
+        ),
+        "duration_step_min": getattr(getattr(config, "variation", None), "clip_duration_step_min_sec", 2.0),
+        "duration_step_max": getattr(getattr(config, "variation", None), "clip_duration_step_max_sec", 4.0),
+        "duration_max_same": getattr(getattr(config, "variation", None), "clip_duration_max_same_sec", 2),
         "asr_words": len(asr_words or []),
         "asr_first": (asr_words or [{}])[0].get("word") if asr_words else "",
         "asr_last": (asr_words or [{}])[-1].get("word") if asr_words else "",
@@ -463,6 +477,102 @@ def _segment_overlaps(
         ):
             return True
     return False
+
+
+def _apply_duration_variation(
+    segments: list[HighlightSegment],
+    video_info: VideoInfo,
+    config: AppConfig,
+) -> list[HighlightSegment]:
+    """Shorten selected clips so batches do not all render with the same length."""
+    variation = getattr(config, "variation", None)
+    if (
+        len(segments) <= 2
+        or not getattr(variation, "enabled", False)
+        or not getattr(variation, "clip_duration_variation", True)
+    ):
+        return segments
+
+    max_same = max(1, int(getattr(variation, "clip_duration_max_same_sec", 2) or 2))
+    if max_same >= len(segments):
+        return segments
+
+    step_min = max(0.5, float(getattr(variation, "clip_duration_step_min_sec", 2.0) or 2.0))
+    step_max = max(step_min, float(getattr(variation, "clip_duration_step_max_sec", 4.0) or 4.0))
+    step_mid = round((step_min + step_max) / 2.0, 2)
+    step_pattern = [step_min, step_mid, step_max]
+
+    min_duration = max(1.0, float(min(config.min_clip_duration_sec, config.hard_max_clip_duration_sec)))
+    max_duration = max(
+        min_duration,
+        float(min(config.max_clip_duration_sec, config.hard_max_clip_duration_sec)),
+    )
+    current_durations = [
+        max(0.0, float(segment.end_sec - segment.start_sec))
+        for segment in segments
+    ]
+    if not current_durations:
+        return segments
+
+    base_duration = min(max(current_durations), max_duration)
+    if base_duration < min_duration + step_min:
+        return segments
+
+    varied: list[HighlightSegment] = []
+    duration_counts: dict[int, int] = {}
+    cumulative_drop = 0.0
+    changed = False
+
+    for index, segment in enumerate(segments):
+        current_duration = max(0.0, float(segment.end_sec - segment.start_sec))
+        if current_duration <= 0:
+            varied.append(segment)
+            continue
+
+        if index < max_same:
+            target_duration = min(current_duration, base_duration)
+        else:
+            cumulative_drop += step_pattern[(index - max_same) % len(step_pattern)]
+            target_duration = min(current_duration, base_duration - cumulative_drop)
+
+        target_duration = max(min_duration, min(target_duration, current_duration, max_duration))
+        rounded_duration = int(round(target_duration))
+        while (
+            duration_counts.get(rounded_duration, 0) >= max_same
+            and target_duration - step_min >= min_duration
+        ):
+            target_duration -= step_min
+            rounded_duration = int(round(target_duration))
+
+        new_end = min(float(video_info.duration_sec), float(segment.start_sec + target_duration))
+        actual_duration = max(0.0, new_end - segment.start_sec)
+        if actual_duration < min_duration and current_duration >= min_duration:
+            new_end = min(float(video_info.duration_sec), float(segment.start_sec + min_duration))
+            actual_duration = max(0.0, new_end - segment.start_sec)
+
+        rounded_actual = int(round(actual_duration))
+        duration_counts[rounded_actual] = duration_counts.get(rounded_actual, 0) + 1
+
+        if abs(actual_duration - current_duration) >= 0.25:
+            changed = True
+            reasons = list(getattr(segment, "reasons", []) or [])
+            reasons.append(f"duration_variation_{current_duration:.1f}_to_{actual_duration:.1f}s")
+            varied.append(
+                HighlightSegment(
+                    start_sec=segment.start_sec,
+                    end_sec=new_end,
+                    score=segment.score,
+                    reasons=reasons,
+                    source=segment.source,
+                )
+            )
+        else:
+            varied.append(segment)
+
+    if changed:
+        durations = ", ".join(f"{segment.end_sec - segment.start_sec:.1f}s" for segment in varied)
+        console.print(f"[cyan]Clip duration variation: {durations}[/cyan]")
+    return varied
 
 
 def _fallback_highlights(

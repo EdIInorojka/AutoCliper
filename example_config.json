@@ -100,6 +100,10 @@
   "variation": {
     "enabled": true,
     "intro_trim_randomization": 1.5,
+    "clip_duration_variation": true,
+    "clip_duration_step_min_sec": 2.0,
+    "clip_duration_step_max_sec": 4.0,
+    "clip_duration_max_same_sec": 2,
     "cta_time_randomization": true,
     "slight_zoom_variants": 0.05,
     "subtitle_style_variants": true,

@@ -44,6 +44,10 @@ class TestConfig(unittest.TestCase):
         self.assertFalse(config.quick_preview.enabled)
         self.assertEqual(config.export.render_preset, "quality")
         self.assertTrue(config.render_resume_enabled)
+        self.assertTrue(config.variation.clip_duration_variation)
+        self.assertEqual(config.variation.clip_duration_step_min_sec, 2.0)
+        self.assertEqual(config.variation.clip_duration_step_max_sec, 4.0)
+        self.assertEqual(config.variation.clip_duration_max_same_sec, 2)
         self.assertEqual(config.highlight_report_path, "highlight_report.json")
         self.assertEqual(
             config.variation.cta_text_variants,
@@ -1093,6 +1097,42 @@ class TestHighlightDetector(unittest.TestCase):
         self.assertEqual(len(filled), 3)
         self.assertEqual(filled[1].start_sec, 100)
         self.assertEqual(filled[2].start_sec, 200)
+
+    def test_duration_variation_allows_only_two_same_lengths_then_steps_down(self):
+        from app.highlight_detector import HighlightSegment, _apply_duration_variation
+        from app.config import AppConfig
+        from app.probe import VideoInfo
+
+        info = VideoInfo("video.mp4", 600, 30, 1280, 720, [])
+        config = AppConfig(clips_override=5)
+        segments = [
+            HighlightSegment(i * 80, i * 80 + 45, 0.8, ["test"], "scored")
+            for i in range(5)
+        ]
+
+        varied = _apply_duration_variation(segments, info, config)
+        durations = [round(segment.end_sec - segment.start_sec) for segment in varied]
+
+        self.assertEqual(durations, [45, 45, 43, 40, 36])
+        self.assertLessEqual(max(durations.count(duration) for duration in set(durations)), 2)
+
+    def test_duration_variation_respects_min_duration(self):
+        from app.highlight_detector import HighlightSegment, _apply_duration_variation
+        from app.config import AppConfig
+        from app.probe import VideoInfo
+
+        info = VideoInfo("video.mp4", 600, 30, 1280, 720, [])
+        config = AppConfig(clips_override=5)
+        config.min_clip_duration_sec = 40
+        segments = [
+            HighlightSegment(i * 80, i * 80 + 45, 0.8, ["test"], "scored")
+            for i in range(5)
+        ]
+
+        varied = _apply_duration_variation(segments, info, config)
+        durations = [round(segment.end_sec - segment.start_sec) for segment in varied]
+
+        self.assertEqual(durations, [45, 45, 43, 40, 40])
 
     def test_highlight_report_writes_reasons(self):
         from app.highlight_detector import HighlightSegment, write_highlight_report

@@ -83,6 +83,10 @@ class MusicConfig:
 class VariationConfig:
     enabled: bool = True
     intro_trim_randomization: float = 1.5
+    clip_duration_variation: bool = True
+    clip_duration_step_min_sec: float = 2.0
+    clip_duration_step_max_sec: float = 4.0
+    clip_duration_max_same_sec: int = 2
     cta_time_randomization: bool = True
     slight_zoom_variants: float = 0.05
     subtitle_style_variants: bool = True
