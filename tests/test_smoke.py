@@ -129,6 +129,60 @@ class TestHelpers(unittest.TestCase):
             self.assertTrue(p.exists())
 
 
+class TestWizard(unittest.TestCase):
+    def test_wizard_standard_text_uses_selected_english_language(self):
+        from app.wizard import WizardOptions, _build_cli_args
+
+        args = _build_cli_args(
+            WizardOptions(
+                input_path="D:\\video.mp4",
+                language="en",
+                output_dir="output\\generated",
+                clips=3,
+                render_preset="quality",
+            )
+        )
+
+        self.assertIn("--subtitle-lang", args)
+        self.assertEqual(args[args.index("--subtitle-lang") + 1], "en")
+        self.assertEqual(args[args.index("--cta-lang") + 1], "en")
+        self.assertIn("--cta-text-mode", args)
+        self.assertIn("file", args)
+        self.assertIn("--no-music", args)
+
+    def test_wizard_custom_cta_and_voice_args(self):
+        from app.wizard import WizardOptions, _build_cli_args
+
+        args = _build_cli_args(
+            WizardOptions(
+                input_path="video.mp4",
+                language="ru",
+                output_dir="out",
+                clips=1,
+                render_preset="balanced",
+                cta_text_mode="custom",
+                cta_text="MY CTA",
+                cta_voice="voice.wav",
+                preview_time="03:00",
+                preview_layout=True,
+                delete_source=True,
+            )
+        )
+
+        self.assertIn("--cta-text", args)
+        self.assertEqual(args[args.index("--cta-text") + 1], "MY CTA")
+        self.assertIn("--cta-voice", args)
+        self.assertEqual(args[args.index("--cta-voice") + 1], "voice.wav")
+        self.assertIn("--preview-time", args)
+        self.assertIn("--delete-input-after-success", args)
+
+    def test_windows_batch_launchers_are_ascii_wrappers(self):
+        root = Path(__file__).resolve().parent.parent
+        for name in ("generate_clips.cmd", "run_local.bat"):
+            data = (root / name).read_bytes()
+            self.assertTrue(all(byte < 128 for byte in data), name)
+
+
 class TestLayoutSelector(unittest.TestCase):
     def test_apply_selection_with_both_crops_uses_split_layout(self):
         from app.config import AppConfig

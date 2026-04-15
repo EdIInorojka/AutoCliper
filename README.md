@@ -78,6 +78,12 @@ Interactive CMD wizard:
 generate_clips.cmd
 ```
 
+`generate_clips.cmd` and `run_local.bat` are ASCII-only wrappers to avoid Windows CMD encoding bugs. The Russian step-by-step wizard runs in Python:
+
+```cmd
+python -m app.wizard
+```
+
 Double-click launcher:
 
 ```cmd

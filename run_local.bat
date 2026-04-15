@@ -1,33 +1,30 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+chcp 65001 >nul
 cd /d "%~dp0"
 
-REM StreamCuter - быстрый запуск под Windows
-REM Пример:
-REM   run_local.bat --input "D:\video.mp4" --clips 3
+set "PYTHONUTF8=1"
 
 echo ============================================
-echo   StreamCuter - генератор вертикальных клипов
+echo   StreamCuter - Windows launcher
 echo ============================================
 echo.
 
-REM Check Python first.
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo ОШИБКА: Python не найден. Сначала установи Python 3.11+.
+    echo ERROR: Python was not found. Install Python 3.11+ first.
     echo https://www.python.org/downloads/
-    pause
+    if "%SC_PAUSE%"=="1" pause
     exit /b 1
 )
 
-REM Сначала используем ffmpeg/ffprobe из PATH. Скачиваем локально только если их нет.
 where ffmpeg >nul 2>&1
 if errorlevel 1 (
     if exist "tools\ffmpeg\bin\ffmpeg.exe" (
-        echo Использую локальный ffmpeg из tools\ffmpeg\bin
+        echo Using local ffmpeg from tools\ffmpeg\bin
         set "PATH=%CD%\tools\ffmpeg\bin;%PATH%"
     ) else (
-        echo ffmpeg не найден в PATH. Скачиваю ffmpeg в tools\ffmpeg...
+        echo ffmpeg was not found in PATH. Bootstrapping into tools\ffmpeg...
         powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\bootstrap.ps1" -ProjectDir "%CD%"
         if exist "tools\ffmpeg\bin\ffmpeg.exe" (
             set "PATH=%CD%\tools\ffmpeg\bin;%PATH%"
@@ -38,43 +35,81 @@ if errorlevel 1 (
 
 ffmpeg -version >nul 2>&1
 if errorlevel 1 (
-    echo ОШИБКА: ffmpeg всё ещё недоступен.
-    echo Установи ffmpeg с https://ffmpeg.org/download.html или проверь tools\ffmpeg.
-    pause
+    echo ERROR: ffmpeg is still unavailable.
+    echo Install ffmpeg or check tools\ffmpeg\bin.
+    if "%SC_PAUSE%"=="1" pause
     exit /b 1
 )
 
 ffprobe -version >nul 2>&1
 if errorlevel 1 (
-    echo ОШИБКА: ffprobe недоступен.
-    echo Установи ffmpeg с https://ffmpeg.org/download.html или проверь tools\ffmpeg.
-    pause
+    echo ERROR: ffprobe is unavailable.
+    echo Install ffmpeg or check tools\ffmpeg\bin.
+    if "%SC_PAUSE%"=="1" pause
     exit /b 1
 )
 
-REM Ставим зависимости при первом запуске.
-if not exist "venv" (
-    echo Создаю виртуальное окружение...
+if not exist "venv\Scripts\python.exe" (
+    echo Creating virtual environment...
     python -m venv venv
-    call "venv\Scripts\activate.bat"
-    echo Устанавливаю зависимости...
-    pip install -r requirements.txt
-) else (
-    call "venv\Scripts\activate.bat"
+    if errorlevel 1 (
+        echo ERROR: failed to create venv.
+        if "%SC_PAUSE%"=="1" pause
+        exit /b 1
+    )
+)
+
+call "venv\Scripts\activate.bat"
+if errorlevel 1 (
+    echo ERROR: failed to activate venv.
+    if "%SC_PAUSE%"=="1" pause
+    exit /b 1
+)
+
+set "SC_NEED_DEPS=0"
+python -c "import rich, yaml, cv2, numpy" >nul 2>&1
+if errorlevel 1 set "SC_NEED_DEPS=1"
+if not exist "venv\.streamcuter_deps_installed" set "SC_NEED_DEPS=1"
+
+if "%SC_NEED_DEPS%"=="1" (
+    python -c "import rich, yaml, cv2, numpy" >nul 2>&1
+    if errorlevel 1 (
+        echo Installing Python dependencies...
+        python -m pip install --upgrade pip
+        if errorlevel 1 (
+            echo ERROR: failed to upgrade pip.
+            if "%SC_PAUSE%"=="1" pause
+            exit /b 1
+        )
+        python -m pip install -r requirements.txt
+        if errorlevel 1 (
+            echo ERROR: failed to install requirements.
+            if "%SC_PAUSE%"=="1" pause
+            exit /b 1
+        )
+    )
+    echo ok>"venv\.streamcuter_deps_installed"
 )
 
 echo.
-echo Запускаю StreamCuter с аргументами: %*
-echo.
-
-python -m app.main %*
+if /I "%~1"=="--wizard" (
+    echo Starting StreamCuter wizard...
+    echo.
+    python -m app.wizard
+) else (
+    echo Starting StreamCuter CLI:
+    echo   python -m app.main %*
+    echo.
+    python -m app.main %*
+)
 set "SC_EXIT=%ERRORLEVEL%"
 
 echo.
 if "%SC_EXIT%"=="0" (
-    echo Готово. Проверь папку output или выбранную папку выгрузки.
+    echo Done.
 ) else (
-    echo StreamCuter завершился с ошибкой. Код: %SC_EXIT%.
+    echo StreamCuter finished with error code %SC_EXIT%.
 )
-pause
+
+if "%SC_PAUSE%"=="1" pause
 exit /b %SC_EXIT%
