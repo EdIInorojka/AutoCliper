@@ -49,9 +49,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "venv\Scripts\python.exe" (
+set "SC_VENV=venv"
+set "SC_VENV_OK=0"
+if exist "venv\Scripts\python.exe" (
+    "venv\Scripts\python.exe" --version >nul 2>&1
+    if not errorlevel 1 set "SC_VENV_OK=1"
+)
+if "%SC_VENV_OK%"=="0" (
+    set "SC_VENV=.venv-streamcuter"
+)
+
+if not exist "%SC_VENV%\Scripts\python.exe" (
     echo Creating virtual environment...
-    python -m venv venv
+    python -m venv "%SC_VENV%"
     if errorlevel 1 (
         echo ERROR: failed to create venv.
         if "%SC_PAUSE%"=="1" pause
@@ -59,7 +69,15 @@ if not exist "venv\Scripts\python.exe" (
     )
 )
 
-call "venv\Scripts\activate.bat"
+"%SC_VENV%\Scripts\python.exe" --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: selected virtual environment is broken: %SC_VENV%
+    echo Remove it manually or install a working Python 3.11+.
+    if "%SC_PAUSE%"=="1" pause
+    exit /b 1
+)
+
+call "%SC_VENV%\Scripts\activate.bat"
 if errorlevel 1 (
     echo ERROR: failed to activate venv.
     if "%SC_PAUSE%"=="1" pause
@@ -67,12 +85,12 @@ if errorlevel 1 (
 )
 
 set "SC_NEED_DEPS=0"
-python -c "import rich, yaml, cv2, numpy" >nul 2>&1
+python -c "import rich, yaml, cv2, numpy, yt_dlp, faster_whisper, curl_cffi" >nul 2>&1
 if errorlevel 1 set "SC_NEED_DEPS=1"
-if not exist "venv\.streamcuter_deps_installed" set "SC_NEED_DEPS=1"
+if not exist "%SC_VENV%\.streamcuter_deps_installed" set "SC_NEED_DEPS=1"
 
 if "%SC_NEED_DEPS%"=="1" (
-    python -c "import rich, yaml, cv2, numpy" >nul 2>&1
+    python -c "import rich, yaml, cv2, numpy, yt_dlp, faster_whisper, curl_cffi" >nul 2>&1
     if errorlevel 1 (
         echo Installing Python dependencies...
         python -m pip install --upgrade pip
@@ -88,19 +106,19 @@ if "%SC_NEED_DEPS%"=="1" (
             exit /b 1
         )
     )
-    echo ok>"venv\.streamcuter_deps_installed"
+    echo ok>"%SC_VENV%\.streamcuter_deps_installed"
 )
 
 echo.
 if /I "%~1"=="--wizard" (
     echo Starting StreamCuter wizard...
     echo.
-    python -m app.wizard
+    "%SC_VENV%\Scripts\python.exe" -m app.wizard
 ) else (
     echo Starting StreamCuter CLI:
-    echo   python -m app.main %*
+    echo   %SC_VENV%\Scripts\python.exe -m app.main %*
     echo.
-    python -m app.main %*
+    "%SC_VENV%\Scripts\python.exe" -m app.main %*
 )
 set "SC_EXIT=%ERRORLEVEL%"
 

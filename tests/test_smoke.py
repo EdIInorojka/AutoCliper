@@ -1120,6 +1120,26 @@ class TestDownloader(unittest.TestCase):
         self.assertTrue(is_url("https://youtube.com/watch"))
         self.assertFalse(is_url("D:\\video.mp4"))
 
+    def test_curl_cert_error_detection(self):
+        from app.downloader import _looks_like_curl_cert_error
+
+        err = RuntimeError(
+            "curl: (77) error setting certificate verify locations: "
+            "CAfile: C:\\Users\\Name\\Lib\\site-packages\\certifi\\cacert.pem"
+        )
+
+        self.assertTrue(_looks_like_curl_cert_error(err))
+        self.assertFalse(_looks_like_curl_cert_error(RuntimeError("regular network error")))
+
+    def test_configure_yt_dlp_tls_returns_existing_ascii_path(self):
+        from app.downloader import configure_yt_dlp_tls
+
+        ca_bundle = configure_yt_dlp_tls()
+
+        if ca_bundle is not None:
+            self.assertTrue(Path(ca_bundle).exists())
+            ca_bundle.encode("ascii")
+
 
 class TestLayout(unittest.TestCase):
     def test_layout_no_webcam(self):
