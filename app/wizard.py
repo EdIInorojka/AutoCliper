@@ -1,8 +1,4 @@
-"""Interactive Russian wizard for the Windows launcher.
-
-The CMD files intentionally stay ASCII-only. Russian text lives here so that
-Windows CMD never tries to parse mojibake prompts as commands.
-"""
+"""Interactive Russian wizard for the Windows launcher."""
 
 from __future__ import annotations
 
@@ -11,7 +7,11 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
+
+from app.utils.console import get_console
+
+console = get_console()
 
 
 @dataclass
@@ -21,42 +21,56 @@ class WizardOptions:
     output_dir: str
     clips: int
     render_preset: str
+    input_start_sec: Optional[float] = None
+    input_end_sec: Optional[float] = None
     cta_text_mode: str = "file"
     cta_text: str = ""
     cta_voice: str = ""
-    quick_preview: bool = False
     preview_layout: bool = True
     preview_time: str = ""
     delete_source: bool = False
     music: bool = False
 
 
+def _print_header(title: str) -> None:
+    console.print()
+    console.print("[bold cyan]============================================[/bold cyan]")
+    console.print(f"[bold cyan]  {title}[/bold cyan]")
+    console.print("[bold cyan]============================================[/bold cyan]")
+    console.print()
+
+
 def _read(prompt: str, default: str = "") -> str:
-    suffix = f" [{default}]" if default else ""
-    value = input(f"{prompt}{suffix}: ").strip()
+    suffix = f" [[dim]{default}[/dim]]" if default else ""
+    console.print(f"[cyan]{prompt}[/cyan]{suffix}")
+    value = input("  > ").strip()
     return value or default
 
 
 def _choice(prompt: str, choices: dict[str, tuple[str, str]], default: str) -> str:
-    print(prompt)
+    console.print(f"[bold cyan]{prompt}[/bold cyan]")
     for key, (title, description) in choices.items():
-        print(f"  {key}. {title}{' - ' + description if description else ''}")
+        if description:
+            console.print(f"  [yellow]{key}[/yellow]. [white]{title}[/white] [dim]- {description}[/dim]")
+        else:
+            console.print(f"  [yellow]{key}[/yellow]. [white]{title}[/white]")
     while True:
         value = _read("Выбор", default).strip()
         if value in choices:
             return value
-        print("Введите номер из списка.")
+        console.print("[yellow]Введите номер из списка.[/yellow]")
 
 
-def _yes_no(prompt: str, default: bool = False) -> bool:
-    default_text = "д" if default else "н"
-    while True:
-        value = _read(f"{prompt} (д/н)", default_text).lower()
-        if value in {"д", "да", "y", "yes"}:
-            return True
-        if value in {"н", "нет", "n", "no"}:
-            return False
-        print("Введите д или н.")
+def _bool_choice(prompt: str, default: bool = False) -> bool:
+    value = _choice(
+        prompt,
+        {
+            "1": ("Да", ""),
+            "2": ("Нет", ""),
+        },
+        "1" if default else "2",
+    )
+    return value == "1"
 
 
 def _ask_clips() -> int:
@@ -65,11 +79,11 @@ def _ask_clips() -> int:
         try:
             clips = int(raw)
         except ValueError:
-            print("Нужно целое число, например 5.")
+            console.print("[yellow]Нужно целое число, например 5.[/yellow]")
             continue
         if 1 <= clips <= 100:
             return clips
-        print("Поставьте число от 1 до 100.")
+        console.print("[yellow]Поставьте число от 1 до 100.[/yellow]")
 
 
 def _normalize_voice_path(raw: str) -> str:
@@ -78,10 +92,56 @@ def _normalize_voice_path(raw: str) -> str:
         return ""
     path = Path(value)
     if not path.exists():
-        print("Файл озвучки не найден, продолжаю без него:")
-        print(f"  {value}")
+        console.print("[yellow]Файл озвучки не найден, продолжаю без него:[/yellow]")
+        console.print(f"  [dim]{value}[/dim]")
         return ""
     return str(path)
+
+
+def _fmt_timestamp(seconds: float) -> str:
+    total = max(0, int(round(seconds)))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _select_input_range(input_path: str) -> tuple[Optional[float], Optional[float]]:
+    try:
+        from app.downloader import resolve_input_metadata
+        from app.trim_selector import select_input_range
+    except Exception as exc:
+        console.print(f"[yellow]Не удалось открыть выбор диапазона: {exc}[/yellow]")
+        return None, None
+
+    try:
+        metadata = resolve_input_metadata(input_path, announce=False)
+    except Exception as exc:
+        console.print(f"[yellow]Не удалось получить длительность входа: {exc}[/yellow]")
+        return None, None
+
+    if metadata.duration_sec <= 1.0:
+        console.print("[yellow]Видео слишком короткое для выбора диапазона, продолжаю целиком.[/yellow]")
+        return None, None
+
+    try:
+        selected = select_input_range(
+            title=metadata.display_name,
+            duration_sec=metadata.duration_sec,
+        )
+    except Exception as exc:
+        console.print(f"[yellow]Окно выбора диапазона не открылось: {exc}[/yellow]")
+        return None, None
+
+    if selected is None:
+        console.print("[dim]Диапазон не выбран, продолжаю с целым видео.[/dim]")
+        return None, None
+
+    start_sec, end_sec = selected
+    if start_sec <= 0.0 and abs(end_sec - metadata.duration_sec) <= 0.01:
+        return None, None
+    return start_sec, end_sec
 
 
 def _build_cli_args(options: WizardOptions) -> list[str]:
@@ -103,6 +163,11 @@ def _build_cli_args(options: WizardOptions) -> list[str]:
         "--no-music",
     ]
 
+    if options.input_start_sec is not None:
+        args.extend(["--input-start", f"{options.input_start_sec:.3f}"])
+    if options.input_end_sec is not None:
+        args.extend(["--input-end", f"{options.input_end_sec:.3f}"])
+
     if options.cta_text_mode == "custom" and options.cta_text:
         args.extend(["--cta-text", options.cta_text])
     else:
@@ -110,8 +175,6 @@ def _build_cli_args(options: WizardOptions) -> list[str]:
 
     if options.cta_voice:
         args.extend(["--cta-voice", options.cta_voice])
-    if options.quick_preview:
-        args.append("--quick-preview")
     if options.preview_layout:
         args.append("--preview-layout")
         if options.preview_time:
@@ -126,41 +189,44 @@ def _build_cli_args(options: WizardOptions) -> list[str]:
 
 
 def _print_summary(options: WizardOptions, command: Iterable[str]) -> None:
-    print()
-    print("============================================")
-    print("  Запускаю генерацию")
-    print("============================================")
-    print(f"Видео/ссылка:       {options.input_path}")
-    print(f"Язык:               {'русский' if options.language == 'ru' else 'английский'}")
-    print(
-        "CTA текст:          "
-        + (options.cta_text if options.cta_text_mode == "custom" and options.cta_text else "стандартный файл")
+    _print_header("Запускаю генерацию")
+    console.print(f"[white]Видео/ссылка:[/white]       [bold]{options.input_path}[/bold]")
+    if options.input_start_sec is not None or options.input_end_sec is not None:
+        start_label = _fmt_timestamp(options.input_start_sec or 0.0)
+        end_label = _fmt_timestamp(options.input_end_sec) if options.input_end_sec is not None else "до конца"
+        console.print(f"[white]Диапазон входа:[/white]     [bold]{start_label} - {end_label}[/bold]")
+    console.print(
+        f"[white]Язык:[/white]               [bold]{'русский' if options.language == 'ru' else 'английский'}[/bold]"
     )
-    print(f"CTA озвучка:        {options.cta_voice or 'нет'}")
-    print(f"Папка выгрузки:     {options.output_dir}")
-    print(f"Количество клипов:  {options.clips}")
-    print(f"Качество:           {options.render_preset}")
-    print(f"Музыка:             {'вкл' if options.music else 'выкл'}")
-    print(f"Предпросмотр:       {'да' if options.preview_layout else 'нет'}")
+    console.print(
+        "[white]CTA текст:[/white]          "
+        + (
+            f"[bold]{options.cta_text}[/bold]"
+            if options.cta_text_mode == "custom" and options.cta_text
+            else "[bold]стандартный файл[/bold]"
+        )
+    )
+    console.print(f"[white]CTA озвучка:[/white]        [bold]{options.cta_voice or 'нет'}[/bold]")
+    console.print(f"[white]Папка выгрузки:[/white]     [bold]{options.output_dir}[/bold]")
+    console.print(f"[white]Количество клипов:[/white]  [bold]{options.clips}[/bold]")
+    console.print(f"[white]Качество:[/white]           [bold]{options.render_preset}[/bold]")
+    console.print(f"[white]Музыка:[/white]             [bold]{'вкл' if options.music else 'выкл'}[/bold]")
+    console.print(f"[white]Предпросмотр:[/white]       [bold]{'да' if options.preview_layout else 'нет'}[/bold]")
     if options.preview_time:
-        print(f"Кадр предпросмотра: {options.preview_time}")
-    print(f"Быстрый preview:    {'да' if options.quick_preview else 'нет'}")
-    print(f"Удалить исходник:   {'да' if options.delete_source else 'нет'}")
-    print()
-    print("Команда:")
-    print("  " + subprocess.list2cmdline([sys.executable, *command]))
-    print()
+        console.print(f"[white]Кадр предпросмотра:[/white] [bold]{options.preview_time}[/bold]")
+    console.print(f"[white]Удалить исходник:[/white]   [bold]{'да' if options.delete_source else 'нет'}[/bold]")
+    console.print()
+    console.print("[bold cyan]Команда:[/bold cyan]")
+    console.print("  " + subprocess.list2cmdline([sys.executable, *command]))
+    console.print()
 
 
 def collect_options() -> WizardOptions:
-    print("============================================")
-    print("  StreamCuter - мастер генерации клипов")
-    print("============================================")
-    print()
+    _print_header("StreamCuter - мастер генерации клипов")
 
     input_path = _read("1. Путь к видео или ссылка YouTube/Kick").strip().strip('"')
     while not input_path:
-        print("Путь или ссылка обязательны.")
+        console.print("[yellow]Путь или ссылка обязательны.[/yellow]")
         input_path = _read("1. Путь к видео или ссылка YouTube/Kick").strip().strip('"')
 
     lang_choice = _choice(
@@ -213,15 +279,19 @@ def collect_options() -> WizardOptions:
         "5": "nvenc_fast",
     }[render_choice]
 
-    preview_layout = _yes_no("8. Открыть окно, где можно выбрать вебку и слот", True)
+    input_start_sec = None
+    input_end_sec = None
+    if _bool_choice("8. Ограничить диапазон входного видео", False):
+        input_start_sec, input_end_sec = _select_input_range(input_path)
+
+    preview_layout = _bool_choice("9. Открыть окно, где можно выбрать вебку и слот", True)
     preview_time = ""
     if preview_layout:
         preview_time = _read(
             "   Момент для кадра предпросмотра, Enter = середина видео, примеры 180 или 03:00"
         ).strip()
 
-    quick_preview = _yes_no("9. Сделать только быстрый preview одного клипа", False)
-    delete_source = _yes_no("10. Удалить исходное видео после успешной генерации", False)
+    delete_source = _bool_choice("10. Удалить исходное видео после успешной генерации", False)
 
     return WizardOptions(
         input_path=input_path,
@@ -229,10 +299,11 @@ def collect_options() -> WizardOptions:
         output_dir=output_dir,
         clips=clips,
         render_preset=render_preset,
+        input_start_sec=input_start_sec,
+        input_end_sec=input_end_sec,
         cta_text_mode=cta_text_mode,
         cta_text=cta_text,
         cta_voice=cta_voice,
-        quick_preview=quick_preview,
         preview_layout=preview_layout,
         preview_time=preview_time,
         delete_source=delete_source,
@@ -240,23 +311,42 @@ def collect_options() -> WizardOptions:
     )
 
 
+def _ask_run_again() -> bool:
+    console.print()
+    return _choice(
+        "Генерация завершена. Что дальше?",
+        {
+            "1": ("Сгенерировать ещё", "вернуться к вводу новой ссылки"),
+            "2": ("Выход", ""),
+        },
+        "2",
+    ) == "1"
+
+
 def main() -> int:
-    try:
-        options = collect_options()
-    except KeyboardInterrupt:
-        print()
-        print("Отменено пользователем.")
-        return 130
+    while True:
+        try:
+            options = collect_options()
+        except KeyboardInterrupt:
+            console.print()
+            console.print("[yellow]Отменено пользователем.[/yellow]")
+            return 130
 
-    cli_args = _build_cli_args(options)
-    _print_summary(options, cli_args)
+        cli_args = _build_cli_args(options)
+        _print_summary(options, cli_args)
 
-    try:
-        return subprocess.call([sys.executable, *cli_args], cwd=os.getcwd())
-    except KeyboardInterrupt:
-        print()
-        print("Остановлено пользователем.")
-        return 130
+        try:
+            exit_code = subprocess.call([sys.executable, *cli_args], cwd=os.getcwd())
+        except KeyboardInterrupt:
+            console.print()
+            console.print("[yellow]Остановлено пользователем.[/yellow]")
+            return 130
+
+        if exit_code != 0:
+            return exit_code
+
+        if not _ask_run_again():
+            return 0
 
 
 if __name__ == "__main__":

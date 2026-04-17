@@ -18,6 +18,7 @@ console = get_console()
 class LayoutSpec:
     """Describes how to compose the vertical frame."""
     has_webcam: bool
+    mode: str = "auto"
     # Webcam panel region in output (x, y, w, h)
     webcam_out: Optional[tuple[int, int, int, int]] = None
     # Source crop for webcam (x, y, w, h) in source video
@@ -26,6 +27,8 @@ class LayoutSpec:
     content_src: Optional[tuple[int, int, int, int]] = None
     # Main content output region (x, y, w, h)
     content_out: Optional[tuple[int, int, int, int]] = None
+    # Final output size (w, h)
+    output_size: tuple[int, int] = (0, 0)
     # Blur background fill filter string (ffmpeg)
     blur_bg_filter: str = ""
     # Subtitle safe zone (y position from bottom)
@@ -90,6 +93,72 @@ def _slot_crop_from_left_webcam(src_w: int, src_h: int, wr) -> tuple[int, int, i
     return _clamp_crop(left, top, right - left, bottom - top, src_w, src_h)
 
 
+def _resolved_manual_slot_crop(config: AppConfig, src_w: int, src_h: int) -> Optional[tuple[int, int, int, int]]:
+    crop = getattr(config, "manual_slot_crop", None)
+    if not crop or len(crop) < 4:
+        return None
+    return _clamp_crop(int(crop[0]), int(crop[1]), int(crop[2]), int(crop[3]), src_w, src_h)
+
+
+def _resolved_manual_cinema_crop(config: AppConfig, src_w: int, src_h: int) -> Optional[tuple[int, int, int, int]]:
+    crop = getattr(config, "manual_cinema_crop", None)
+    if not crop or len(crop) < 4:
+        return None
+    return _clamp_crop(int(crop[0]), int(crop[1]), int(crop[2]), int(crop[3]), src_w, src_h)
+
+
+def _resolve_no_webcam_content_src(
+    src_w: int,
+    src_h: int,
+    config: AppConfig,
+    content_result: ContentDetectionResult | None,
+) -> tuple[tuple[int, int, int, int], str]:
+    manual_slot_crop = _resolved_manual_slot_crop(config, src_w, src_h)
+    if manual_slot_crop is not None:
+        return manual_slot_crop, "manual_slot_crop"
+    if content_result is not None and content_result.has_content:
+        return _clamp_crop(*content_result.crop, src_w, src_h), content_result.reason
+    return centered_content_crop(src_w, src_h), "centered"
+
+
+def _cinema_focus_crop(
+    base_src: tuple[int, int, int, int],
+    src_w: int,
+    src_h: int,
+    out_w: int,
+    out_h: int,
+    target_height_ratio: float = 0.68,
+    max_upscale: float = 1.35,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    bx, by, bw, bh = _clamp_crop(*base_src, src_w, src_h)
+    target_h = _even(int(round(out_h * target_height_ratio)))
+    max_target_h = _even(int(round(bh * max_upscale)))
+    target_h = max(2, min(out_h, target_h, max_target_h))
+    target_aspect = out_w / max(2, target_h)
+
+    focus_w = bw
+    focus_h = bh
+    base_aspect = bw / max(1, bh)
+    if base_aspect > target_aspect:
+        focus_w = max(2, _even(int(round(bh * target_aspect))))
+    else:
+        focus_h = max(2, _even(int(round(bw / max(target_aspect, 1e-6)))))
+    focus_w = min(focus_w, bw)
+    focus_h = min(focus_h, bh)
+    focus_x = bx + (bw - focus_w) // 2
+    focus_y = by + (bh - focus_h) // 2
+    focus_src = _clamp_crop(focus_x, focus_y, focus_w, focus_h, src_w, src_h)
+
+    scale = min(out_w / focus_src[2], target_h / focus_src[3], max_upscale)
+    sharp_w = max(2, _even(int(round(focus_src[2] * scale))))
+    sharp_h = max(2, _even(int(round(focus_src[3] * scale))))
+    sharp_w = min(out_w, sharp_w)
+    sharp_h = min(out_h, sharp_h)
+    sharp_x = max(0, (out_w - sharp_w) // 2)
+    sharp_y = max(0, (out_h - sharp_h) // 2)
+    return focus_src, (sharp_x, sharp_y, sharp_w, sharp_h)
+
+
 def compute_layout(
     src_w: int,
     src_h: int,
@@ -109,6 +178,77 @@ def compute_layout(
       - Full vertical crop of main content with blur fill
     """
     top_ratio = config.webcam_top_ratio  # default 0.33
+    layout_mode = str(getattr(config, "layout_mode", "auto") or "auto").lower()
+
+    if layout_mode == "slot_only":
+        console.print("[cyan]Layout: slot-only mode (centered content with blur fill)[/cyan]")
+        content_src, reason = _resolve_no_webcam_content_src(src_w, src_h, config, content_result)
+        console.print(f"[cyan]Layout: slot-only source={content_src}, reason={reason}[/cyan]")
+        return LayoutSpec(
+            has_webcam=False,
+            mode="slot_only",
+            content_src=content_src,
+            content_out=(0, 0, out_w, out_h),
+            output_size=(out_w, out_h),
+            blur_bg_filter="",
+            subtitle_safe_y=int(out_h * 0.16),
+        )
+
+    if layout_mode == "cinema":
+        manual_cinema_crop = _resolved_manual_cinema_crop(config, src_w, src_h)
+        manual_slot_crop = _resolved_manual_slot_crop(config, src_w, src_h)
+        if manual_cinema_crop is not None:
+            base_src = manual_cinema_crop
+            reason = "manual_cinema_crop"
+        elif manual_slot_crop is not None:
+            base_src = manual_slot_crop
+            reason = "manual_slot_crop"
+        else:
+            base_src = (0, 0, src_w, src_h)
+            reason = "full_frame"
+
+        if webcam_result.has_webcam and webcam_result.region is not None:
+            wr = webcam_result.region
+            console.print("[cyan]Layout: cinema mode with webcam[/cyan]")
+            wc_out_h = int(round(out_h * top_ratio))
+            if wc_out_h % 2:
+                wc_out_h += 1
+            wc_out_h = max(2, min(out_h - 2, wc_out_h))
+            wc_src = _clamp_crop(wr.x, wr.y, wr.w, wr.h, src_w, src_h)
+            content_panel_h = max(2, out_h - wc_out_h)
+            content_src, sharp_box = _cinema_focus_crop(base_src, src_w, src_h, out_w, content_panel_h)
+            console.print(
+                f"[cyan]Layout: cinema source={content_src}, "
+                f"webcam_src={wc_src}, content_panel=(0,{wc_out_h},{out_w},{content_panel_h}), "
+                f"sharp_box={sharp_box}, reason={reason}[/cyan]"
+            )
+            return LayoutSpec(
+                has_webcam=True,
+                mode="cinema",
+                webcam_out=(0, 0, out_w, wc_out_h),
+                webcam_src=wc_src,
+                content_src=content_src,
+                content_out=(0, wc_out_h, out_w, content_panel_h),
+                output_size=(out_w, out_h),
+                blur_bg_filter="",
+                subtitle_safe_y=wc_out_h + content_panel_h - 150,
+            )
+
+        console.print("[cyan]Layout: cinema mode (zoomed no-webcam composition)[/cyan]")
+        content_src, content_out = _cinema_focus_crop(base_src, src_w, src_h, out_w, out_h)
+        console.print(
+            f"[cyan]Layout: cinema source={content_src}, "
+            f"sharp_out={content_out}, reason={reason}[/cyan]"
+        )
+        return LayoutSpec(
+            has_webcam=False,
+            mode="cinema",
+            content_src=content_src,
+            content_out=content_out,
+            output_size=(out_w, out_h),
+            blur_bg_filter="",
+            subtitle_safe_y=int(out_h * 0.16),
+        )
 
     if webcam_result.has_webcam and webcam_result.region is not None:
         wr = webcam_result.region
@@ -154,24 +294,23 @@ def compute_layout(
 
         return LayoutSpec(
             has_webcam=True,
+            mode="auto",
             webcam_out=(wc_out_x, wc_out_y, wc_out_w, wc_out_h),
             webcam_src=wc_src,
             content_src=content_src,
             content_out=(content_out_x, content_out_y, content_out_w, content_out_h),
+            output_size=(out_w, out_h),
             blur_bg_filter=blur_bg,
             subtitle_safe_y=content_out_y + content_out_h - 150,
         )
     else:
         console.print("[cyan]Layout: no-webcam mode (centered content with blur fill)[/cyan]")
 
-        if content_result is not None and content_result.has_content:
-            content_src = _clamp_crop(*content_result.crop, src_w, src_h)
-            console.print(
-                f"[cyan]Layout: no-webcam slot_src={content_src}, "
-                f"reason={content_result.reason}[/cyan]"
-            )
-        else:
-            content_src = centered_content_crop(src_w, src_h)
+        content_src, reason = _resolve_no_webcam_content_src(src_w, src_h, config, content_result)
+        console.print(
+            f"[cyan]Layout: no-webcam slot_src={content_src}, "
+            f"reason={reason}[/cyan]"
+        )
 
         # Blur background fill: scale+crop source for blur, then overlay sharp content
         blur_bg = (
@@ -182,8 +321,10 @@ def compute_layout(
 
         return LayoutSpec(
             has_webcam=False,
+            mode="auto",
             content_src=content_src,
             content_out=(0, 0, out_w, out_h),
+            output_size=(out_w, out_h),
             blur_bg_filter=blur_bg,
             subtitle_safe_y=int(out_h * 0.16),
         )
@@ -224,16 +365,17 @@ def build_composite_filter(layout: LayoutSpec, src_count: int, input_label: str 
     else:
         cs = layout.content_src
         co = layout.content_out
+        frame_w, frame_h = layout.output_size
         # Split source: one for content, one for blur bg
         # Use scale with force_divisible_by=2 for h264 compatibility
         filters = (
             f"[{input_label}]split=2[content_src][bg_src];"
-        f"[content_src]crop={cs[2]}:{cs[3]}:{cs[0]}:{cs[1]},"
+            f"[content_src]crop={cs[2]}:{cs[3]}:{cs[0]}:{cs[1]},"
             f"scale={co[2]}:{co[3]}:force_original_aspect_ratio=decrease:force_divisible_by=2[content_scaled];"
             f"[bg_src]crop={cs[2]}:{cs[3]}:{cs[0]}:{cs[1]},"
-            f"scale={co[2]}:{co[3]}:force_original_aspect_ratio=increase,"
-            f"crop={co[2]}:{co[3]},"
+            f"scale={frame_w}:{frame_h}:force_original_aspect_ratio=increase,"
+            f"crop={frame_w}:{frame_h},"
             f"gblur=sigma=20[bg];"
-            f"[bg][content_scaled]overlay=(W-w)/2:(H-h)/2[composed]"
+            f"[bg][content_scaled]overlay={co[0]}+({co[2]}-w)/2:{co[1]}+({co[3]}-h)/2[composed]"
         )
         return filters, "composed"

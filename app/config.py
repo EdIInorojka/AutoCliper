@@ -1,4 +1,4 @@
-"""Configuration model and loader (stdlib: dataclasses; YAML optional via PyYAML)."""
+﻿"""Configuration model and loader (stdlib: dataclasses; YAML optional via PyYAML)."""
 
 from __future__ import annotations
 
@@ -29,16 +29,6 @@ class CacheConfig:
     asr: bool = True
     highlights: bool = True
     layout: bool = True
-
-
-@dataclass
-class QuickPreviewConfig:
-    enabled: bool = False
-    only: bool = True
-    duration_sec: float = 10.0
-    width: int = 720
-    height: int = 1280
-    output_dir: str = "output/preview"
 
 
 @dataclass
@@ -94,7 +84,6 @@ class VariationConfig:
     cta_text_variants: List[str] = field(
         default_factory=lambda: [
             "THE GAME IN BIO",
-            "LINK IN BIO",
             "BIO FOR MORE",
             "CHECK BIO",
             "MORE IN BIO",
@@ -116,7 +105,6 @@ class BotPresetFields:
     available_cta_texts: List[str] = field(
         default_factory=lambda: [
             "THE GAME IN BIO",
-            "LINK IN BIO",
             "BIO FOR MORE",
             "CHECK BIO",
             "MORE IN BIO",
@@ -136,6 +124,8 @@ class BotPresetFields:
 @dataclass
 class AppConfig:
     input: str = ""
+    input_start_sec: Optional[float] = None
+    input_end_sec: Optional[float] = None
     output_dir: str = "output"
     temp_dir: str = "temp"
     language: str = "auto"
@@ -150,10 +140,12 @@ class AppConfig:
     subtitles_template_en: str = "subtitles/en.ass"
     subtitles_between_y_ratio: float = 0.42
     whisper_model_cache_dir: str = "models/whisper"
+    layout_mode: str = "auto"
     webcam_detection: str = "auto"
     webcam_edge_margin_ratio: float = 0.15
     manual_webcam_crop: Optional[List[int]] = None
     manual_slot_crop: Optional[List[int]] = None
+    manual_cinema_crop: Optional[List[int]] = None
     layout_preview_enabled: bool = False
     layout_preview_time_sec: Optional[float] = None
     layout_preview_autofill: bool = True
@@ -171,7 +163,6 @@ class AppConfig:
     cta: CTAConfig = field(default_factory=CTAConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
-    quick_preview: QuickPreviewConfig = field(default_factory=QuickPreviewConfig)
     cleanup_temp_files: bool = True
     delete_input_after_success: bool = False
     render_resume_enabled: bool = True
@@ -203,15 +194,13 @@ def app_config_from_dict(data: Optional[dict]) -> AppConfig:
         "cta": _merge_dataclass(CTAConfig, data.pop("cta", None)),
         "music": _merge_dataclass(MusicConfig, data.pop("music", None)),
         "cache": _merge_dataclass(CacheConfig, data.pop("cache", None)),
-        "quick_preview": _merge_dataclass(
-            QuickPreviewConfig, data.pop("quick_preview", None)
-        ),
         "export": _merge_dataclass(ExportConfig, data.pop("export", None)),
         "variation": _merge_dataclass(VariationConfig, data.pop("variation", None)),
         "bot_preset_fields": _merge_dataclass(
             BotPresetFields, data.pop("bot_preset_fields", None)
         ),
     }
+    data.pop("quick_preview", None)
     base = AppConfig()
     allowed = {f.name for f in fields(AppConfig)}
     flat = {k: v for k, v in data.items() if k in allowed}
@@ -370,3 +359,4 @@ SUBTITLE_THEMES = {
         "margin_v": 80,
     },
 }
+

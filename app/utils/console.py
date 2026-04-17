@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import sys
 from typing import Any
+
+_RICH_CONSOLE = None
 
 
 @dataclass
@@ -15,14 +18,16 @@ class _Console:
     def print(self, *args: Any, **kwargs: Any) -> None:
         # If rich is available, use it for markup; otherwise plain print.
         try:
-            from rich.console import Console as RichConsole  # type: ignore
+            global _RICH_CONSOLE
+            if _RICH_CONSOLE is None:
+                from rich.console import Console as RichConsole  # type: ignore
 
-            RichConsole(legacy_windows=False).print(*args, **kwargs)
+                _RICH_CONSOLE = RichConsole(legacy_windows=False)
+            _RICH_CONSOLE.print(*args, **kwargs)
         except Exception:
             # Strip basic rich markup tags if present.
             msg = " ".join(str(a) for a in args)
-            for token in ("[bold cyan]", "[/bold cyan]", "[bold green]", "[/bold green]", "[cyan]", "[/cyan]", "[red]", "[/red]", "[yellow]", "[/yellow]", "[dim]", "[/dim]"):
-                msg = msg.replace(token, "")
+            msg = re.sub(r"\[/?[^\]]+\]", "", msg)
             encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
             print(msg.encode(encoding, errors="replace").decode(encoding, errors="replace"))
 

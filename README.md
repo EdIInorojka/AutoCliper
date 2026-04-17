@@ -105,7 +105,9 @@ python -m app.main --input "video.mp4" --subtitle-lang ru --cta-lang ru --cta-vo
 python -m app.main --input "video.mp4" --cta-text "МОЯ НАДПИСЬ"
 python -m app.main --input "video.mp4" --cta-text-file "cta_texts\ru.txt"
 python -m app.main --input "video.mp4" --render-preset quality
-python -m app.main --input "video.mp4" --quick-preview --quick-preview-sec 10
+python -m app.main --input "video.mp4" --input-start 05:00 --input-end 35:00
+python -m app.main --input "video.mp4" --layout-mode slot_only
+python -m app.main --input "video.mp4" --layout-mode cinema
 python -m app.main --input "video.mp4" --force-render
 python -m app.main --input "video.mp4" --no-cache
 python -m app.main --input "video.mp4" --delete-input-after-success
@@ -130,10 +132,12 @@ Main config files:
 Important fields:
 
 - `input`: local path or URL.
+- `input_start_sec`, `input_end_sec`: optional slice bounds; the selected slice becomes the working source for ASR, highlights, layout preview and rendering.
 - `output_dir`, `temp_dir`.
 - `language`: `auto`, `ru`, or `en`.
 - `subtitles_enabled`, `subtitles_mode`, `subtitles_position`, `subtitles_theme`, `subtitles_font_name`, `subtitles_font_path`, `subtitles_template_ru`, `subtitles_template_en`.
 - `whisper_model_cache_dir`: persistent faster-whisper model cache; default `models/whisper`.
+- `layout_mode`: `auto`, `slot_only`, or `cinema`.
 - `webcam_detection`, `webcam_edge_margin_ratio`, `manual_webcam_crop`, `manual_slot_crop`, `layout_preview_enabled`, `layout_preview_time_sec`, `layout_debug_preview`, `layout_preview_save_path`, `webcam_top_ratio`, `content_bottom_ratio`.
 - `layout_preview_autofill`: preselect auto-detected webcam/slot boxes in the preview window so you can just fix them if needed.
 - `layout_annotation_dataset_enabled`, `layout_annotation_dataset_path`: saves manual preview selections as JSONL and uses them later as learned layout candidates.
@@ -144,7 +148,6 @@ Important fields:
 - Default CTA file variants are limited to: `THE GAME IN BIO`, `LINK IN BIO`, `BIO FOR MORE`, `CHECK BIO`, `MORE IN BIO`, `ИГРА В ОПИСАНИИ`, `ССЫЛКА В ОПИСАНИИ`.
 - `music.enabled`, `music.folder`, `music.volume_min`, `music.volume_max`, `music.duck_under_speech`; default `music.enabled` is `false`.
 - `cache.enabled`, `cache.dir`, `cache.asr`, `cache.highlights`, `cache.layout`: persistent cache for repeated runs.
-- `quick_preview.enabled`, `quick_preview.only`, `quick_preview.duration_sec`, `quick_preview.output_dir`: render a short 720x1280 preview clip before doing a full batch.
 - `variation.enabled`, `variation.cta_text_variants`, `variation.cta_text_variants_ru`, `variation.subtitle_style_variants`, `variation.bgm_random_pick`.
 - `cleanup_temp_files`, `delete_input_after_success`, `render_resume_enabled`.
 - `export.render_preset`, `export.width`, `export.height`, `export.fps`, `export.codec`, `export.crf`, `export.preset`, `export.bitrate`, `export.audio_codec`.
@@ -237,13 +240,14 @@ Do not run the video renderer inside Vercel/serverless. ffmpeg rendering and ASR
 
 - `ffmpeg not found`: install ffmpeg or run `run_local.bat`, which attempts the local bootstrap path.
 - `yt-dlp is not installed`: install `requirements.txt`, not `requirements-local.txt`.
+- `kick.com` returns HTTP 403 during ingest: the site may block anonymous requests. This project now enables `yt-dlp` impersonation support by default; if Kick still blocks a video, export cookies to a Netscape cookie file and point `STREAMCUTER_COOKIES_FILE` at it.
 - First ASR run is slow: faster-whisper downloads the model once.
 - Background music is disabled by default. Use `--music` or set `music.enabled: true` to opt in.
 - Word-by-word subtitles use `subtitles/ru.ass` or `subtitles/en.ass` as the ASS style template depending on the selected language.
 - Subtitle cleanup is language-aware: English subtitles keep English words only, Russian subtitles keep Cyrillic words only, and obvious ASR punctuation/CJK/mojibake noise is dropped without extra slow spellchecking.
 - CTA pause text uses `cta_texts/ru.txt` or `cta_texts/en.txt` by default. Use `--cta-text "..."` for a custom one-off phrase, or edit those files for the standard phrase pool. Long CTA text is wrapped and font-fitted so it stays inside the 9:16 frame.
 - If webcam is not detected, the main content uses the best active slot crop with a blurred fill and subtitles move to the top-safe position.
-- Use `--preview-layout` when you want to manually mark the stream layout. The window opens on the middle frame by default and includes a timeline slider so you can switch to another moment before selecting. `--preview-time 03:00` or `layout_preview_time_sec` changes the initial frame. Selecting both areas uses the split webcam/game layout. Selecting only one area uses that crop as the centered no-webcam vertical content with blurred fill and top-safe subtitles.
+- Use `--preview-layout` when you want to manually mark the stream layout. The window opens on the middle frame by default and includes a timeline slider so you can switch to another moment before selecting. `--preview-time 03:00` or `layout_preview_time_sec` changes the initial frame. `Apply` keeps the normal behavior. `Apply slot only` builds an explicit no-webcam slot layout. `Apply cinema` builds a zoomed no-webcam cinema layout with blurred fill and top subtitles.
 - Set `debug: true` to save a layout preview with a green webcam box and red slot box. If a rare stream still needs correction, set `manual_webcam_crop` or `manual_slot_crop` to `[x, y, width, height]` in source-video pixels.
 - `--delete-input-after-success` removes the source video only after output clips are created. Use it carefully for local files.
 - No music files with music enabled: the pipeline logs it and continues without background music.

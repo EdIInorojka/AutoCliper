@@ -84,6 +84,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if not defined STREAMCUTER_COOKIES_FILE (
+    if exist "cookies.txt" set "STREAMCUTER_COOKIES_FILE=%CD%\cookies.txt"
+)
+if not defined STREAMCUTER_CPU_SCALE set "STREAMCUTER_CPU_SCALE=0.85"
+
 set "SC_NEED_DEPS=0"
 python -c "import rich, yaml, cv2, numpy, yt_dlp, faster_whisper, curl_cffi" >nul 2>&1
 if errorlevel 1 set "SC_NEED_DEPS=1"
@@ -107,6 +112,14 @@ if "%SC_NEED_DEPS%"=="1" (
         )
     )
     echo ok>"%SC_VENV%\.streamcuter_deps_installed"
+)
+
+for /f "delims=" %%I in ('python -c "import sys; print(sys.base_prefix)"') do set "SC_PY_BASE=%%I"
+if not defined TCL_LIBRARY (
+    if exist "%SC_PY_BASE%\tcl\tcl8.6\init.tcl" set "TCL_LIBRARY=%SC_PY_BASE%\tcl\tcl8.6"
+)
+if not defined TK_LIBRARY (
+    if exist "%SC_PY_BASE%\tcl\tk8.6" set "TK_LIBRARY=%SC_PY_BASE%\tcl\tk8.6"
 )
 
 echo.

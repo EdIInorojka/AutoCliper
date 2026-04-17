@@ -16,9 +16,21 @@ from app.layout import LayoutSpec, build_composite_filter
 from app.probe import VideoInfo
 from app.highlight_detector import HighlightSegment
 from app.subtitles import generate_ass_file, generate_word_subtitles
-from app.cta_pause import build_cta_segment_filter, pick_cta_text, pick_cta_trigger_time
+from app.cta_pause import (
+    build_cta_segment_filter,
+    cta_effectively_enabled,
+    pick_cta_text,
+    pick_cta_trigger_time,
+)
 from app.audio_mix import pick_random_track, build_final_audio_mix
-from app.utils.helpers import ensure_dir, fmt_time, ffmpeg_exe, ffprobe_exe, safe_filename
+from app.utils.helpers import (
+    cpu_thread_budget,
+    ensure_dir,
+    fmt_time,
+    ffmpeg_exe,
+    ffprobe_exe,
+    safe_filename,
+)
 
 console = get_console()
 
@@ -55,9 +67,10 @@ def render_clip(
 
     # Optional CTA voice is resolved before subtitle timings and video filters,
     # because the freeze length should match the selected voiceover length.
+    cta_enabled = cta_effectively_enabled(config)
     voice_path = None
     voice_duration = None
-    if config.cta.enabled and config.cta.voice_mp3_path:
+    if cta_enabled and config.cta.voice_mp3_path:
         voice_path = _resolve_existing_media_path(config.cta.voice_mp3_path)
         if voice_path:
             voice_duration = _probe_media_duration(voice_path)
@@ -82,7 +95,7 @@ def render_clip(
     cta_start = None
     cta_insert_duration = 0.0
     cta_freeze_duration = None
-    if config.cta.enabled:
+    if cta_enabled:
         cta_text = pick_cta_text(config)
         cta_freeze_duration = _cta_freeze_duration(config, voice_duration)
         cta_start = pick_cta_trigger_time(
@@ -136,6 +149,7 @@ def render_clip(
 
     # Build ffmpeg command (PATH or tools/ffmpeg/bin)
     cmd = [ffmpeg_exe(), "-y"]
+    cmd.extend(["-threads", str(cpu_thread_budget())])
 
     # Seek as *input* option so filter graph time starts at 0.
     cmd.extend(["-ss", str(segment.start_sec)])
@@ -241,7 +255,7 @@ def _build_filter_chain(
     current_label = comp_label
     cta_start = None
     cta_insert_duration = 0.0
-    if config.cta.enabled:
+    if cta_effectively_enabled(config):
         cta_filter, cta_start, cta_end = build_cta_segment_filter(
             clip_duration=clip_dur,
             cta_text=cta_text or pick_cta_text(config),
@@ -465,9 +479,15 @@ def render_quick_preview(
     """Render a short 720x1280 preview clip for layout/subtitle/CTA checks."""
     if not segments:
         return []
+    preview_settings = getattr(config, "quick_preview", None)
+    preview_width = int(getattr(preview_settings, "width", 720))
+    preview_height = int(getattr(preview_settings, "height", 1280))
+    preview_duration = max(3.0, float(getattr(preview_settings, "duration_sec", 10.0) or 10.0))
+    preview_output_dir = str(getattr(preview_settings, "output_dir", "output/preview") or "output/preview")
+
     preview_config = copy.deepcopy(config)
-    preview_config.export.width = int(config.quick_preview.width)
-    preview_config.export.height = int(config.quick_preview.height)
+    preview_config.export.width = preview_width
+    preview_config.export.height = preview_height
     preview_config.export.render_preset = "fast"
     preview_config.export.fps = min(int(config.export.fps or 30), 30)
     preview_config.render_resume_enabled = False
@@ -480,7 +500,6 @@ def render_quick_preview(
     )
 
     first = segments[0]
-    preview_duration = max(3.0, float(config.quick_preview.duration_sec or 10.0))
     end_sec = min(first.end_sec, first.start_sec + preview_duration)
     if end_sec <= first.start_sec:
         end_sec = min(video_info.duration_sec, first.start_sec + preview_duration)
@@ -492,7 +511,7 @@ def render_quick_preview(
         source="quick_preview",
     )
 
-    out_dir = ensure_dir(config.quick_preview.output_dir)
+    out_dir = ensure_dir(preview_output_dir)
     out_path = out_dir / safe_filename(
         f"quick_preview_{fmt_time(preview_segment.start_sec)}_{fmt_time(preview_segment.end_sec)}.mp4"
     )

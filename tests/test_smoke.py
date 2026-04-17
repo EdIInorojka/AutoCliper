@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -28,9 +29,11 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.cta.freeze_duration_sec, 4.0)
         self.assertEqual(config.cta.typewriter_speed, 0.16)
         self.assertEqual(config.whisper_model_cache_dir, "models/whisper")
+        self.assertEqual(config.layout_mode, "auto")
         self.assertEqual(config.webcam_edge_margin_ratio, 0.15)
         self.assertIsNone(config.manual_webcam_crop)
         self.assertIsNone(config.manual_slot_crop)
+        self.assertIsNone(config.manual_cinema_crop)
         self.assertFalse(config.layout_preview_enabled)
         self.assertIsNone(config.layout_preview_time_sec)
         self.assertTrue(config.layout_preview_autofill)
@@ -40,8 +43,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.layout_annotation_dataset_path, "layout_dataset/annotations.jsonl")
         self.assertTrue(config.cache.enabled)
         self.assertEqual(config.cache.dir, "cache")
-        self.assertTrue(config.quick_preview.only)
-        self.assertFalse(config.quick_preview.enabled)
+        self.assertIsNone(config.input_start_sec)
+        self.assertIsNone(config.input_end_sec)
+        self.assertFalse(hasattr(config, "quick_preview"))
         self.assertEqual(config.export.render_preset, "quality")
         self.assertTrue(config.render_resume_enabled)
         self.assertTrue(config.variation.clip_duration_variation)
@@ -53,7 +57,6 @@ class TestConfig(unittest.TestCase):
             config.variation.cta_text_variants,
             [
                 "THE GAME IN BIO",
-                "LINK IN BIO",
                 "BIO FOR MORE",
                 "CHECK BIO",
                 "MORE IN BIO",
@@ -67,7 +70,6 @@ class TestConfig(unittest.TestCase):
             config.bot_preset_fields.available_cta_texts,
             [
                 "THE GAME IN BIO",
-                "LINK IN BIO",
                 "BIO FOR MORE",
                 "CHECK BIO",
                 "MORE IN BIO",
@@ -120,6 +122,175 @@ class TestHelpers(unittest.TestCase):
         # <>:" are 4 chars each replaced with _
         self.assertEqual(safe_filename('test<>:"file'), 'test____file')
 
+    def test_asr_model_selection_prefers_stronger_models_for_english(self):
+        from app.asr import _select_model
+        from app.config import AppConfig
+
+        config = AppConfig()
+
+        self.assertEqual(_select_model(120.0, config, "en", requested_language="en"), "medium.en")
+        self.assertEqual(_select_model(2400.0, config, "en", requested_language="en"), "medium.en")
+        self.assertEqual(_select_model(120.0, config, "en", requested_language="auto"), "medium")
+        self.assertEqual(_select_model(120.0, config, "ru", requested_language="ru"), "medium")
+        self.assertEqual(_select_model(1200.0, config, "ru", requested_language="ru"), "medium")
+
+    def test_asr_model_selection_respects_env_override(self):
+        from app.asr import _select_model
+        from app.config import AppConfig
+
+        config = AppConfig()
+        previous = os.environ.get("STREAMCUTER_WHISPER_MODEL")
+        os.environ["STREAMCUTER_WHISPER_MODEL"] = "custom-model"
+        try:
+            self.assertEqual(_select_model(120.0, config, "en", requested_language="en"), "custom-model")
+        finally:
+            if previous is None:
+                os.environ.pop("STREAMCUTER_WHISPER_MODEL", None)
+            else:
+                os.environ["STREAMCUTER_WHISPER_MODEL"] = previous
+
+    def test_input_range_normalization(self):
+        from app.downloader import _normalize_selected_range
+
+        self.assertIsNone(_normalize_selected_range(120.0, None, None))
+        self.assertEqual(_normalize_selected_range(120.0, 10.0, None), (10.0, 120.0))
+        self.assertEqual(_normalize_selected_range(120.0, None, 30.0), (0.0, 30.0))
+
+        with self.assertRaises(RuntimeError):
+            _normalize_selected_range(120.0, 60.0, 10.0)
+
+        with self.assertRaises(RuntimeError):
+            _normalize_selected_range(120.0, 130.0, None)
+
+    def test_download_ranges_callback_emits_numeric_time_range(self):
+        from app.downloader import _download_ranges_callback
+
+        class _DummyYdl:
+            def to_screen(self, _message):
+                return None
+
+        callback = _download_ranges_callback(10.5, 25.0)
+        sections = tuple(callback({"id": "vid", "duration": 100.0}, _DummyYdl()))
+
+        self.assertEqual(sections, ({"start_time": 10.5, "end_time": 25.0},))
+
+    def test_range_output_template_uses_unique_filename(self):
+        from app.downloader import _range_output_template
+
+        path = _range_output_template("temp", 530.0, 1375.0)
+
+        self.assertIn("__range_530000_1375000", path)
+        self.assertTrue(path.endswith(".%(ext)s"))
+
+    def test_range_output_path_uses_real_extension(self):
+        from app.downloader import _range_output_path
+
+        path = _range_output_path("temp", "Dp5pvB6giJQ", 1339.0, 1870.0, "mp4")
+
+        self.assertIn("Dp5pvB6giJQ__range_1339000_1870000.mp4", path)
+
+    def test_range_partial_output_path_keeps_media_extension(self):
+        from app.downloader import _range_partial_output_path
+
+        path = _range_partial_output_path("temp\\Dp5pvB6giJQ__range_1339000_1870000.mp4")
+
+        self.assertTrue(path.endswith("Dp5pvB6giJQ__range_1339000_1870000.part.mp4"))
+
+    def test_remote_extract_error_mapping_detects_stale_cookies(self):
+        from app.downloader import _friendly_remote_extract_error_message
+
+        message = _friendly_remote_extract_error_message(
+            RuntimeError("Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies.")
+        )
+
+        self.assertIsNotNone(message)
+        self.assertIn("cookies.txt", message)
+
+    def test_range_download_prefers_hls_formats(self):
+        from app.downloader import _range_download_format_selector
+
+        selector = _range_download_format_selector()
+
+        self.assertIn("m3u8_native", selector)
+
+    def test_build_remote_range_ffmpeg_cmd_maps_requested_formats(self):
+        from app.downloader import _build_remote_range_ffmpeg_cmd
+
+        class _DummyCookieJar:
+            def get_cookies_for_url(self, _url):
+                return []
+
+        cmd = _build_remote_range_ffmpeg_cmd(
+            "ffmpeg",
+            [
+                {
+                    "url": "https://video.example/stream.m3u8",
+                    "http_headers": {"User-Agent": "UA"},
+                    "manifest_stream_number": 0,
+                },
+                {
+                    "url": "https://audio.example/stream.m3u8",
+                    "http_headers": {"User-Agent": "UA"},
+                    "manifest_stream_number": 0,
+                },
+            ],
+            _DummyCookieJar(),
+            "temp\\clip.mp4",
+            10.0,
+            25.0,
+        )
+
+        joined = " ".join(cmd)
+        self.assertIn("-progress pipe:1", joined)
+        self.assertEqual(cmd.count("-i"), 2)
+        self.assertIn("-map 0:0", joined)
+        self.assertIn("-map 1:0", joined)
+        self.assertIn("temp\\clip.mp4", joined)
+
+    def test_asr_chunk_plan_covers_full_duration(self):
+        from app.asr import _build_asr_chunk_plan
+
+        chunks = _build_asr_chunk_plan(610.0)
+
+        self.assertEqual(chunks[0]["core_start"], 0.0)
+        self.assertEqual(chunks[-1]["core_end"], 610.0)
+        self.assertGreaterEqual(len(chunks), 3)
+
+    def test_browser_cookie_env_parsing(self):
+        from app.downloader import _browser_cookie_spec_from_env
+
+        previous = os.environ.get("STREAMCUTER_COOKIES_FROM_BROWSER")
+        os.environ["STREAMCUTER_COOKIES_FROM_BROWSER"] = "chrome:Default"
+        try:
+            self.assertEqual(
+                _browser_cookie_spec_from_env(),
+                ("chrome", "Default", None, None),
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("STREAMCUTER_COOKIES_FROM_BROWSER", None)
+            else:
+                os.environ["STREAMCUTER_COOKIES_FROM_BROWSER"] = previous
+
+    def test_yt_dlp_js_runtime_prefers_node_when_available(self):
+        from app.downloader import _detect_js_runtime
+
+        with patch("app.downloader.shutil.which", side_effect=lambda name: "/tmp/node" if name == "node" else None):
+            self.assertEqual(_detect_js_runtime(), {"node": {}})
+
+    def test_yt_dlp_js_runtime_env_override(self):
+        from app.downloader import _detect_js_runtime
+
+        previous = os.environ.get("STREAMCUTER_YTDLP_JS_RUNTIME")
+        os.environ["STREAMCUTER_YTDLP_JS_RUNTIME"] = "node"
+        try:
+            self.assertEqual(_detect_js_runtime(), {"node": {}})
+        finally:
+            if previous is None:
+                os.environ.pop("STREAMCUTER_YTDLP_JS_RUNTIME", None)
+            else:
+                os.environ["STREAMCUTER_YTDLP_JS_RUNTIME"] = previous
+
     def test_fmt_time(self):
         from app.utils.helpers import fmt_time
         self.assertEqual(fmt_time(65), "01:05")
@@ -131,6 +302,112 @@ class TestHelpers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p = ensure_dir(os.path.join(td, "sub", "dir"))
             self.assertTrue(p.exists())
+
+    def test_cpu_thread_budget_uses_scale_and_override(self):
+        from app.utils.helpers import cpu_thread_budget
+
+        with patch("app.utils.helpers.os.cpu_count", return_value=16):
+            previous_scale = os.environ.get("STREAMCUTER_CPU_SCALE")
+            previous_threads = os.environ.get("STREAMCUTER_CPU_THREADS")
+            os.environ["STREAMCUTER_CPU_SCALE"] = "0.7"
+            os.environ.pop("STREAMCUTER_CPU_THREADS", None)
+            try:
+                self.assertEqual(cpu_thread_budget(), 11)
+                os.environ["STREAMCUTER_CPU_THREADS"] = "6"
+                self.assertEqual(cpu_thread_budget(), 6)
+            finally:
+                if previous_scale is None:
+                    os.environ.pop("STREAMCUTER_CPU_SCALE", None)
+                else:
+                    os.environ["STREAMCUTER_CPU_SCALE"] = previous_scale
+                if previous_threads is None:
+                    os.environ.pop("STREAMCUTER_CPU_THREADS", None)
+                else:
+                    os.environ["STREAMCUTER_CPU_THREADS"] = previous_threads
+
+
+class TestCli(unittest.TestCase):
+    def test_cli_parses_input_range_flags(self):
+        from app.cli import cli_entry
+        from app.config import AppConfig
+
+        captured = {}
+
+        def _capture(config):
+            captured["config"] = config
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "streamcuter",
+                "--input",
+                "video.mp4",
+                "--input-start",
+                "05:00",
+                "--input-end",
+                "35:00",
+            ],
+        ), patch("app.config.load_config", return_value=AppConfig()), patch(
+            "app.main.run_pipeline",
+            side_effect=_capture,
+        ):
+            cli_entry()
+
+        self.assertEqual(captured["config"].input, "video.mp4")
+        self.assertEqual(captured["config"].input_start_sec, 300.0)
+        self.assertEqual(captured["config"].input_end_sec, 2100.0)
+
+    def test_cli_rejects_reversed_input_range(self):
+        from app.cli import cli_entry
+        from app.config import AppConfig
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "streamcuter",
+                "--input",
+                "video.mp4",
+                "--input-start",
+                "60",
+                "--input-end",
+                "10",
+            ],
+        ), patch("app.config.load_config", return_value=AppConfig()):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_entry()
+
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_cli_parses_layout_mode(self):
+        from app.cli import cli_entry
+        from app.config import AppConfig
+
+        captured = {}
+
+        def _capture(config):
+            captured["config"] = config
+
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "streamcuter",
+                "--input",
+                "video.mp4",
+                "--layout-mode",
+                "cinema",
+            ],
+        ), patch("app.config.load_config", return_value=AppConfig()), patch(
+            "app.main.run_pipeline",
+            side_effect=_capture,
+        ):
+            cli_entry()
+
+        self.assertEqual(captured["config"].layout_mode, "cinema")
+        self.assertEqual(captured["config"].webcam_detection, "off")
+        self.assertEqual(captured["config"].subtitles_position, "slot_top")
 
 
 class TestWizard(unittest.TestCase):
@@ -153,6 +430,7 @@ class TestWizard(unittest.TestCase):
         self.assertIn("--cta-text-mode", args)
         self.assertIn("file", args)
         self.assertIn("--no-music", args)
+        self.assertNotIn("--quick-preview", args)
 
     def test_wizard_custom_cta_and_voice_args(self):
         from app.wizard import WizardOptions, _build_cli_args
@@ -164,6 +442,8 @@ class TestWizard(unittest.TestCase):
                 output_dir="out",
                 clips=1,
                 render_preset="balanced",
+                input_start_sec=15.0,
+                input_end_sec=90.0,
                 cta_text_mode="custom",
                 cta_text="MY CTA",
                 cta_voice="voice.wav",
@@ -177,8 +457,36 @@ class TestWizard(unittest.TestCase):
         self.assertEqual(args[args.index("--cta-text") + 1], "MY CTA")
         self.assertIn("--cta-voice", args)
         self.assertEqual(args[args.index("--cta-voice") + 1], "voice.wav")
+        self.assertIn("--input-start", args)
+        self.assertEqual(args[args.index("--input-start") + 1], "15.000")
+        self.assertIn("--input-end", args)
+        self.assertEqual(args[args.index("--input-end") + 1], "90.000")
         self.assertIn("--preview-time", args)
         self.assertIn("--delete-input-after-success", args)
+
+    def test_wizard_summary_does_not_print_quick_preview(self):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        from app.wizard import WizardOptions, _print_summary
+
+        buf = StringIO()
+        with redirect_stdout(buf):
+            _print_summary(
+                WizardOptions(
+                    input_path="video.mp4",
+                    language="ru",
+                    output_dir="out",
+                    clips=2,
+                    render_preset="quality",
+                    input_start_sec=10.0,
+                    input_end_sec=50.0,
+                ),
+                ["-m", "app.main"],
+            )
+
+        text = buf.getvalue()
+        self.assertIn("Диапазон входа", text)
+        self.assertNotIn("quick preview", text.lower())
 
     def test_windows_batch_launchers_are_ascii_wrappers(self):
         root = Path(__file__).resolve().parent.parent
@@ -203,6 +511,7 @@ class TestLayoutSelector(unittest.TestCase):
         mode = apply_layout_selection(config, selection)
 
         self.assertEqual(mode, "manual_split")
+        self.assertEqual(config.layout_mode, "auto")
         self.assertEqual(config.manual_webcam_crop, [10, 20, 300, 168])
         self.assertEqual(config.manual_slot_crop, [400, 120, 1200, 700])
         self.assertEqual(config.webcam_detection, "auto")
@@ -230,6 +539,23 @@ class TestLayoutSelector(unittest.TestCase):
 
         self.assertEqual(_initial_preview_time(info, config), 120.0)
 
+    def test_apply_selection_split_restores_between_subtitles(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig()
+        config.subtitles_position = "slot_top"
+        selection = LayoutSelection(
+            webcam_crop=(10, 20, 300, 168),
+            slot_crop=(400, 120, 1200, 700),
+            source_size=(1920, 1080),
+            preview_time_sec=120.0,
+        )
+
+        apply_layout_selection(config, selection)
+
+        self.assertEqual(config.subtitles_position, "between_webcam_and_game")
+
     def test_apply_selection_with_one_crop_uses_no_webcam_top_subtitles(self):
         from app.config import AppConfig
         from app.layout_selector import LayoutSelection, apply_layout_selection
@@ -249,6 +575,74 @@ class TestLayoutSelector(unittest.TestCase):
         self.assertEqual(config.manual_slot_crop, [100, 50, 500, 280])
         self.assertEqual(config.webcam_detection, "off")
         self.assertEqual(config.subtitles_position, "slot_top")
+
+    def test_apply_selection_slot_only_mode_sets_explicit_layout_mode(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig()
+        selection = LayoutSelection(
+            webcam_crop=None,
+            slot_crop=(240, 160, 1240, 760),
+            source_size=(1920, 1080),
+            preview_time_sec=120.0,
+            apply_mode="slot_only",
+        )
+
+        mode = apply_layout_selection(config, selection)
+
+        self.assertEqual(mode, "slot_only_no_webcam")
+        self.assertEqual(config.layout_mode, "slot_only")
+        self.assertIsNone(config.manual_webcam_crop)
+        self.assertEqual(config.manual_slot_crop, [240, 160, 1240, 760])
+        self.assertEqual(config.webcam_detection, "off")
+        self.assertEqual(config.subtitles_position, "slot_top")
+
+    def test_apply_selection_cinema_mode_works_without_manual_crop(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig()
+        selection = LayoutSelection(
+            webcam_crop=None,
+            slot_crop=None,
+            source_size=(1920, 1080),
+            preview_time_sec=120.0,
+            apply_mode="cinema",
+        )
+
+        mode = apply_layout_selection(config, selection)
+
+        self.assertEqual(mode, "cinema_no_webcam")
+        self.assertEqual(config.layout_mode, "cinema")
+        self.assertIsNone(config.manual_webcam_crop)
+        self.assertIsNone(config.manual_slot_crop)
+        self.assertEqual(config.webcam_detection, "off")
+        self.assertEqual(config.subtitles_position, "slot_top")
+
+    def test_apply_selection_cinema_mode_can_keep_optional_webcam(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig()
+        selection = LayoutSelection(
+            webcam_crop=(100, 80, 480, 270),
+            slot_crop=None,
+            source_size=(1920, 1080),
+            preview_time_sec=120.0,
+            cinema_crop=(520, 140, 860, 620),
+            apply_mode="cinema",
+        )
+
+        mode = apply_layout_selection(config, selection)
+
+        self.assertEqual(mode, "cinema_with_webcam")
+        self.assertEqual(config.layout_mode, "cinema")
+        self.assertEqual(config.manual_webcam_crop, [100, 80, 480, 270])
+        self.assertIsNone(config.manual_slot_crop)
+        self.assertEqual(config.manual_cinema_crop, [520, 140, 860, 620])
+        self.assertEqual(config.webcam_detection, "auto")
+        self.assertEqual(config.subtitles_position, "between_webcam_and_game")
 
     def test_save_selection_appends_dataset(self):
         from app.config import AppConfig
@@ -1083,6 +1477,28 @@ class TestHighlightDetector(unittest.TestCase):
         for s in segments:
             self.assertGreaterEqual(s.end_sec - s.start_sec, config.min_clip_duration_sec)
 
+    def test_audio_feature_bundle_runs_without_librosa(self):
+        import numpy as np
+        import soundfile as sf
+
+        from app.highlight_detector import _compute_audio_feature_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            audio_path = Path(td) / "audio.wav"
+            sr = 22050
+            silence = np.zeros(sr, dtype=np.float32)
+            t = np.linspace(0, 1, sr, endpoint=False, dtype=np.float32)
+            tone = 0.5 * np.sin(2 * np.pi * 440.0 * t).astype(np.float32)
+            samples = np.concatenate([silence, tone, silence])
+            sf.write(audio_path, samples, sr)
+
+            rms, brightness, onset, out_sr = _compute_audio_feature_bundle(str(audio_path))
+
+            self.assertGreater(len(rms), 0)
+            self.assertEqual(len(rms), len(brightness))
+            self.assertEqual(len(rms), len(onset))
+            self.assertGreater(out_sr, 0)
+
     def test_fill_missing_segments_avoids_clones(self):
         from app.highlight_detector import HighlightSegment, _fill_missing_segments
 
@@ -1181,6 +1597,116 @@ class TestDownloader(unittest.TestCase):
             ca_bundle.encode("ascii")
 
 
+class TestCtaPolicy(unittest.TestCase):
+    def test_cinema_disables_cta_effectively(self):
+        from app.config import AppConfig
+        from app.cta_pause import cta_disabled_reason, cta_effectively_enabled
+
+        config = AppConfig()
+        config.layout_mode = "cinema"
+
+        self.assertFalse(cta_effectively_enabled(config))
+        self.assertEqual(cta_disabled_reason(config), "cinema mode")
+
+    def test_slot_only_keeps_cta_enabled(self):
+        from app.config import AppConfig
+        from app.cta_pause import cta_disabled_reason, cta_effectively_enabled
+
+        config = AppConfig()
+        config.layout_mode = "slot_only"
+
+        self.assertTrue(cta_effectively_enabled(config))
+        self.assertIsNone(cta_disabled_reason(config))
+
+
+class TestRendererPolicy(unittest.TestCase):
+    def test_build_filter_chain_skips_cta_in_cinema(self):
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment
+        from app.layout import LayoutSpec
+        from app.probe import VideoInfo
+        from app.renderer import _build_filter_chain
+
+        config = AppConfig()
+        config.layout_mode = "cinema"
+        segment = HighlightSegment(10.0, 40.0, 0.9)
+        layout = LayoutSpec(
+            has_webcam=False,
+            mode="cinema",
+            content_src=(0, 0, 1920, 1080),
+            content_out=(0, 300, 1080, 1320),
+            output_size=(1080, 1920),
+        )
+        video_info = VideoInfo("video.mp4", 60.0, 30.0, 1920, 1080, [])
+
+        with (
+            patch("app.renderer.build_composite_filter", return_value=("[0:v]null[composed]", "composed")),
+            patch("app.renderer.build_cta_segment_filter") as cta_filter,
+            patch("app.renderer.build_final_audio_mix", return_value="") as audio_mix,
+        ):
+            _build_filter_chain(
+                video_path="video.mp4",
+                video_info=video_info,
+                segment=segment,
+                layout=layout,
+                config=config,
+                ass_path=None,
+                music_path=None,
+                voice_path=None,
+                clip_index=0,
+                cta_text="FOLLOW",
+                cta_start_sec=5.0,
+                cta_freeze_duration_sec=4.0,
+            )
+
+        cta_filter.assert_not_called()
+        self.assertEqual(audio_mix.call_args.kwargs["final_duration_sec"], 30.0)
+        self.assertEqual(audio_mix.call_args.kwargs["cta_insert_duration_sec"], 0.0)
+
+    def test_build_filter_chain_keeps_cta_for_slot_only(self):
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment
+        from app.layout import LayoutSpec
+        from app.probe import VideoInfo
+        from app.renderer import _build_filter_chain
+
+        config = AppConfig()
+        config.layout_mode = "slot_only"
+        segment = HighlightSegment(10.0, 40.0, 0.9)
+        layout = LayoutSpec(
+            has_webcam=False,
+            mode="slot_only",
+            content_src=(0, 0, 1920, 1080),
+            content_out=(0, 0, 1080, 1920),
+            output_size=(1080, 1920),
+        )
+        video_info = VideoInfo("video.mp4", 60.0, 30.0, 1920, 1080, [])
+
+        with (
+            patch("app.renderer.build_composite_filter", return_value=("[0:v]null[composed]", "composed")),
+            patch("app.renderer.build_cta_segment_filter", return_value=("[composed]null[cta_out]", 5.0, 9.0)) as cta_filter,
+            patch("app.renderer.build_final_audio_mix", return_value="") as audio_mix,
+        ):
+            _build_filter_chain(
+                video_path="video.mp4",
+                video_info=video_info,
+                segment=segment,
+                layout=layout,
+                config=config,
+                ass_path=None,
+                music_path=None,
+                voice_path=None,
+                clip_index=0,
+                cta_text="FOLLOW",
+                cta_start_sec=5.0,
+                cta_freeze_duration_sec=4.0,
+            )
+
+        cta_filter.assert_called_once()
+        self.assertEqual(audio_mix.call_args.kwargs["final_duration_sec"], 34.0)
+        self.assertEqual(audio_mix.call_args.kwargs["cta_insert_duration_sec"], 4.0)
+
+
 class TestLayout(unittest.TestCase):
     def test_layout_no_webcam(self):
         from app.layout import compute_layout
@@ -1229,6 +1755,59 @@ class TestLayout(unittest.TestCase):
         self.assertTrue(layout.has_webcam)
         self.assertEqual(layout.webcam_src[0], 0)
         self.assertEqual(layout.content_src, (506, 64, 1340, 908))
+
+    def test_layout_slot_only_mode_uses_centered_no_webcam_compose(self):
+        from app.layout import compute_layout
+        from app.webcam_types import WebcamDetectionResult
+        from app.config import AppConfig
+
+        config = AppConfig()
+        config.layout_mode = "slot_only"
+        config.manual_slot_crop = [240, 160, 1240, 760]
+        result = WebcamDetectionResult(has_webcam=True)
+        layout = compute_layout(1920, 1080, 1080, 1920, result, config)
+
+        self.assertFalse(layout.has_webcam)
+        self.assertEqual(layout.mode, "slot_only")
+        self.assertEqual(layout.content_src, (240, 160, 1240, 760))
+        self.assertEqual(layout.content_out, (0, 0, 1080, 1920))
+
+    def test_layout_cinema_mode_uses_zoomed_center_box(self):
+        from app.layout import compute_layout
+        from app.webcam_types import WebcamDetectionResult
+        from app.config import AppConfig
+
+        config = AppConfig()
+        config.layout_mode = "cinema"
+        result = WebcamDetectionResult(has_webcam=True)
+        layout = compute_layout(1920, 1080, 1080, 1920, result, config)
+
+        self.assertFalse(layout.has_webcam)
+        self.assertEqual(layout.mode, "cinema")
+        self.assertEqual(layout.output_size, (1080, 1920))
+        self.assertLess(layout.content_src[2], 1920)
+        self.assertGreaterEqual(layout.content_out[3], 1200)
+        self.assertLessEqual(layout.content_out[2], 1080)
+
+    def test_layout_cinema_mode_can_stack_optional_webcam(self):
+        from app.layout import compute_layout
+        from app.webcam_types import WebcamDetectionResult, WebcamRegion
+        from app.config import AppConfig
+
+        config = AppConfig()
+        config.layout_mode = "cinema"
+        config.manual_cinema_crop = [400, 120, 1120, 760]
+        region = WebcamRegion(x=10, y=10, w=320, h=180, confidence=0.8)
+        result = WebcamDetectionResult(has_webcam=True, region=region, confidence=0.8)
+
+        layout = compute_layout(1920, 1080, 1080, 1920, result, config)
+
+        self.assertTrue(layout.has_webcam)
+        self.assertEqual(layout.mode, "cinema")
+        self.assertIsNotNone(layout.webcam_src)
+        self.assertEqual(layout.webcam_out[1], 0)
+        self.assertGreater(layout.content_out[1], 0)
+        self.assertEqual(layout.content_out[1], layout.webcam_out[3])
 
 
 if __name__ == "__main__":

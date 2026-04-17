@@ -25,6 +25,8 @@ THEME = {
     "webcam_active": "#16a34a",
     "slot": "#fb5068",
     "slot_active": "#e11d48",
+    "cinema": "#38bdf8",
+    "cinema_active": "#0284c7",
     "apply": "#facc15",
     "apply_active": "#eab308",
     "apply_text": "#111827",
@@ -38,6 +40,8 @@ class LayoutSelection:
     slot_crop: Optional[Crop]
     source_size: tuple[int, int]
     preview_time_sec: float
+    cinema_crop: Optional[Crop] = None
+    apply_mode: str = "auto"
 
 
 def select_layout_crops(
@@ -89,8 +93,12 @@ def select_layout_crops(
         "mode": "webcam",
         "webcam": _crop_from_webcam_result(auto_webcam_result),
         "slot": _crop_from_content_result(auto_content_result),
+        "cinema": _manual_crop_from_config(config, "manual_cinema_crop", source_w, source_h),
+        "apply_mode": "auto",
         "drag_start": None,
         "drag_rect": None,
+        "drag_kind": None,
+        "drag_offset": None,
         "result": None,
         "photo": photo,
         "preview_time_sec": preview_time_sec,
@@ -208,6 +216,7 @@ def select_layout_crops(
     def refresh_button_styles() -> None:
         webcam_button = buttons.get("webcam")
         slot_button = buttons.get("slot")
+        cinema_button = buttons.get("cinema_apply")
         if webcam_button is not None:
             webcam_button.configure(
                 bg=THEME["webcam_active"] if state["mode"] == "webcam" else THEME["webcam"],
@@ -218,16 +227,26 @@ def select_layout_crops(
                 bg=THEME["slot_active"] if state["mode"] == "slot" else THEME["slot"],
                 fg=THEME["text"] if state["mode"] == "slot" else THEME["panel_2"],
             )
+        if cinema_button is not None:
+            cinema_button.configure(
+                bg=THEME["cinema_active"] if state["mode"] == "cinema" else THEME["cinema"],
+                fg=THEME["text"],
+            )
 
     def set_mode(mode: str) -> None:
         state["mode"] = mode
-        label = "webcam" if mode == "webcam" else "slot"
+        if mode != "cinema":
+            state["apply_mode"] = "auto"
+        label = "webcam" if mode == "webcam" else "slot" if mode == "slot" else "cinema"
         mode_badge.configure(
             text=label.upper(),
-            bg=THEME["webcam"] if mode == "webcam" else THEME["slot"],
+            bg=THEME["webcam"] if mode == "webcam" else THEME["slot"] if mode == "slot" else THEME["cinema"],
         )
         refresh_button_styles()
-        status.set(f"Select {label}: drag a rectangle on the stream frame.")
+        if mode == "cinema":
+            status.set("Cinema frame: drag to draw a focus box, or drag inside it to move.")
+        else:
+            status.set(f"Select {label}: drag a rectangle on the stream frame.")
 
     def update_time_label(value: float | None = None) -> None:
         shown = state["preview_time_sec"] if value is None else float(value)
@@ -251,8 +270,11 @@ def select_layout_crops(
             else:
                 state["webcam"] = None
                 state["slot"] = None
+            state["cinema"] = _manual_crop_from_config(config, "manual_cinema_crop", source_w, source_h)
             state["drag_start"] = None
             state["drag_rect"] = None
+            state["drag_kind"] = None
+            state["drag_offset"] = None
             if state["webcam"] is not None or state["slot"] is not None:
                 status.set(
                     f"Frame changed to {_fmt_timestamp(actual_time)}. "
@@ -275,7 +297,11 @@ def select_layout_crops(
             status.set(str(exc))
 
     def current_color() -> str:
-        return THEME["webcam"] if state["mode"] == "webcam" else THEME["slot"]
+        if state["mode"] == "webcam":
+            return THEME["webcam"]
+        if state["mode"] == "slot":
+            return THEME["slot"]
+        return THEME["cinema"]
 
     def clamp_display(x: int, y: int) -> tuple[int, int]:
         return max(0, min(display_w, x)), max(0, min(display_h, y))
@@ -305,11 +331,24 @@ def select_layout_crops(
             canvas.create_rectangle(*source_to_display(state["slot"]), outline=THEME["slot"], width=4, tags="selection")
         if state["webcam"] is not None:
             canvas.create_rectangle(*source_to_display(state["webcam"]), outline=THEME["webcam"], width=4, tags="selection")
+        if state["cinema"] is not None:
+            canvas.create_rectangle(*source_to_display(state["cinema"]), outline=THEME["cinema"], width=4, tags="selection")
         if state["drag_rect"] is not None:
             canvas.create_rectangle(*state["drag_rect"], outline=current_color(), width=3, dash=(8, 4), tags="selection")
 
     def on_press(event) -> None:
         x, y = clamp_display(event.x, event.y)
+        if state["mode"] == "cinema" and state["cinema"] is not None:
+            cx1, cy1, cx2, cy2 = source_to_display(state["cinema"])
+            if cx1 <= x <= cx2 and cy1 <= y <= cy2:
+                state["drag_kind"] = "move"
+                state["drag_offset"] = (x - cx1, y - cy1)
+                state["drag_start"] = (cx1, cy1)
+                state["drag_rect"] = (cx1, cy1, cx2, cy2)
+                redraw()
+                return
+        state["drag_kind"] = "draw"
+        state["drag_offset"] = None
         state["drag_start"] = (x, y)
         state["drag_rect"] = (x, y, x, y)
         redraw()
@@ -317,9 +356,17 @@ def select_layout_crops(
     def on_drag(event) -> None:
         if state["drag_start"] is None:
             return
-        x0, y0 = state["drag_start"]
         x1, y1 = clamp_display(event.x, event.y)
-        state["drag_rect"] = (x0, y0, x1, y1)
+        if state["drag_kind"] == "move" and state["drag_rect"] is not None and state["drag_offset"] is not None:
+            rect_w = state["drag_rect"][2] - state["drag_rect"][0]
+            rect_h = state["drag_rect"][3] - state["drag_rect"][1]
+            offset_x, offset_y = state["drag_offset"]
+            nx1 = max(0, min(display_w - rect_w, x1 - offset_x))
+            ny1 = max(0, min(display_h - rect_h, y1 - offset_y))
+            state["drag_rect"] = (nx1, ny1, nx1 + rect_w, ny1 + rect_h)
+        else:
+            x0, y0 = state["drag_start"]
+            state["drag_rect"] = (x0, y0, x1, y1)
         redraw()
 
     def on_release(event) -> None:
@@ -327,8 +374,21 @@ def select_layout_crops(
             return
         x0, y0 = state["drag_start"]
         x1, y1 = clamp_display(event.x, event.y)
+        drag_kind = state["drag_kind"]
+        drag_rect = state["drag_rect"]
         state["drag_start"] = None
         state["drag_rect"] = None
+        state["drag_kind"] = None
+        state["drag_offset"] = None
+        if drag_rect is None:
+            redraw()
+            return
+        if drag_kind == "move":
+            crop = display_to_source(drag_rect)
+            state["cinema"] = crop
+            status.set(f"Cinema frame moved: {crop}. You can keep webcam or apply cinema.")
+            redraw()
+            return
         if abs(x1 - x0) < 8 or abs(y1 - y0) < 8:
             redraw()
             return
@@ -336,6 +396,9 @@ def select_layout_crops(
         if state["mode"] == "webcam":
             state["webcam"] = crop
             status.set(f"Webcam selected: {crop}. You can select slot or Apply.")
+        elif state["mode"] == "cinema":
+            state["cinema"] = crop
+            status.set(f"Cinema frame selected: {crop}. You can keep webcam or apply cinema.")
         else:
             state["slot"] = crop
             status.set(f"Slot selected: {crop}. You can select webcam or Apply.")
@@ -348,8 +411,52 @@ def select_layout_crops(
         state["result"] = LayoutSelection(
             webcam_crop=state["webcam"],
             slot_crop=state["slot"],
+            cinema_crop=state["cinema"],
             source_size=(source_w, source_h),
             preview_time_sec=state["preview_time_sec"],
+            apply_mode="auto",
+        )
+        root.destroy()
+
+    def on_apply_slot_only() -> None:
+        crop = state["slot"] or state["webcam"]
+        if crop is None:
+            status.set("Select slot first, then apply slot-only mode.")
+            return
+        state["apply_mode"] = "slot_only"
+        state["result"] = LayoutSelection(
+            webcam_crop=None,
+            slot_crop=crop,
+            cinema_crop=None,
+            source_size=(source_w, source_h),
+            preview_time_sec=state["preview_time_sec"],
+            apply_mode="slot_only",
+        )
+        root.destroy()
+
+    def on_apply_cinema() -> None:
+        if state["cinema"] is None:
+            seed_crop = state["slot"] or state["webcam"]
+            state["slot"] = None
+            state["cinema"] = _default_cinema_crop(source_w, source_h, seed_crop)
+            state["mode"] = "cinema"
+            state["apply_mode"] = "cinema"
+            mode_badge.configure(text="CINEMA", bg=THEME["cinema"])
+            refresh_button_styles()
+            status.set(
+                "Cinema frame created. Drag inside it to move, or drag a new cinema box. "
+                "Webcam is optional; apply cinema again when ready."
+            )
+            redraw()
+            return
+        state["apply_mode"] = "cinema"
+        state["result"] = LayoutSelection(
+            webcam_crop=state["webcam"],
+            slot_crop=None,
+            cinema_crop=state["cinema"],
+            source_size=(source_w, source_h),
+            preview_time_sec=state["preview_time_sec"],
+            apply_mode="cinema",
         )
         root.destroy()
 
@@ -381,8 +488,31 @@ def select_layout_crops(
     )
     apply_button.configure(fg=THEME["apply_text"], activeforeground=THEME["apply_text"])
     apply_button.pack(side=tk.RIGHT, padx=(6, 8), pady=8)
-    buttons.update({"webcam": webcam_button, "slot": slot_button})
-    refresh_button_styles()
+    slot_only_button = styled_button(
+        toolbar,
+        "Apply slot only",
+        THEME["slot"],
+        THEME["slot_active"],
+        on_apply_slot_only,
+        18,
+    )
+    slot_only_button.configure(fg=THEME["text"], activeforeground=THEME["text"])
+    slot_only_button.pack(side=tk.RIGHT, padx=(0, 6), pady=8)
+    cinema_button = styled_button(
+        toolbar,
+        "Apply cinema",
+        THEME["cinema"],
+        THEME["cinema_active"],
+        on_apply_cinema,
+        16,
+    )
+    cinema_button.configure(fg=THEME["text"], activeforeground=THEME["text"])
+    cinema_button.pack(side=tk.RIGHT, padx=(0, 6), pady=8)
+    buttons.update({"webcam": webcam_button, "slot": slot_button, "cinema_apply": cinema_button})
+    if str(getattr(config, "layout_mode", "auto") or "auto").lower() == "cinema" and state["cinema"] is not None:
+        set_mode("cinema")
+    else:
+        refresh_button_styles()
     time_scale.configure(command=on_time_preview)
     redraw()
 
@@ -403,21 +533,52 @@ def apply_layout_selection(config: AppConfig, selection: LayoutSelection) -> str
     If only one area is selected, it becomes the single no-webcam content crop:
     centered vertical composition, blurred sides, and top-safe subtitles.
     """
+    apply_mode = str(getattr(selection, "apply_mode", "auto") or "auto")
     has_webcam = selection.webcam_crop is not None
     has_slot = selection.slot_crop is not None
 
+    if apply_mode == "slot_only":
+        crop = selection.slot_crop or selection.webcam_crop
+        if crop is None:
+            return "none"
+        config.layout_mode = "slot_only"
+        config.manual_webcam_crop = None
+        config.manual_slot_crop = list(crop)
+        config.manual_cinema_crop = None
+        config.webcam_detection = "off"
+        config.subtitles_position = "slot_top"
+        return "slot_only_no_webcam"
+
+    if apply_mode == "cinema":
+        crop = selection.cinema_crop or selection.slot_crop or selection.webcam_crop
+        config.layout_mode = "cinema"
+        config.manual_webcam_crop = list(selection.webcam_crop) if selection.webcam_crop is not None else None
+        config.manual_slot_crop = None
+        config.manual_cinema_crop = list(crop) if crop is not None else None
+        config.webcam_detection = "auto" if selection.webcam_crop is not None else "off"
+        config.subtitles_position = (
+            "between_webcam_and_game" if selection.webcam_crop is not None else "slot_top"
+        )
+        return "cinema_with_webcam" if selection.webcam_crop is not None else "cinema_no_webcam"
+
     if has_webcam and has_slot:
+        config.layout_mode = "auto"
         config.manual_webcam_crop = list(selection.webcam_crop or ())
         config.manual_slot_crop = list(selection.slot_crop or ())
+        config.manual_cinema_crop = None
         config.webcam_detection = "auto"
+        if config.subtitles_position == "slot_top":
+            config.subtitles_position = "between_webcam_and_game"
         return "manual_split"
 
     crop = selection.slot_crop or selection.webcam_crop
     if crop is None:
         return "none"
 
+    config.layout_mode = "auto"
     config.manual_webcam_crop = None
     config.manual_slot_crop = list(crop)
+    config.manual_cinema_crop = None
     config.webcam_detection = "off"
     config.subtitles_position = "slot_top"
     return "single_crop_no_webcam"
@@ -436,12 +597,16 @@ def save_layout_selection(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "mode": mode,
+        "apply_mode": selection.apply_mode,
         "source_size": list(selection.source_size),
         "preview_time_sec": selection.preview_time_sec,
         "manual_webcam_crop": list(selection.webcam_crop) if selection.webcam_crop else None,
         "manual_slot_crop": list(selection.slot_crop) if selection.slot_crop else None,
+        "manual_cinema_crop": list(selection.cinema_crop) if selection.cinema_crop else None,
         "effective_manual_webcam_crop": config.manual_webcam_crop,
         "effective_manual_slot_crop": config.manual_slot_crop,
+        "effective_manual_cinema_crop": config.manual_cinema_crop,
+        "effective_layout_mode": config.layout_mode,
         "webcam_detection": config.webcam_detection,
         "subtitles_position": config.subtitles_position,
     }
@@ -482,6 +647,35 @@ def _crop_from_content_result(result) -> Optional[Crop]:
         return None
     x, y, w, h = crop
     return int(x), int(y), int(w), int(h)
+
+
+def _manual_crop_from_config(config: AppConfig, field_name: str, src_w: int, src_h: int) -> Optional[Crop]:
+    raw = getattr(config, field_name, None)
+    if not raw or not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        x, y, w, h = (int(v) for v in raw)
+    except (TypeError, ValueError):
+        return None
+    return _clamp_even_crop(x, y, w, h, src_w, src_h)
+
+
+def _default_cinema_crop(src_w: int, src_h: int, seed_crop: Optional[Crop]) -> Crop:
+    if seed_crop is not None:
+        sx, sy, sw, sh = seed_crop
+        cx = sx + sw / 2.0
+        cy = sy + sh / 2.0
+        grow = 1.12
+        target_w = int(round(sw * grow))
+        target_h = int(round(sh * grow))
+        target_x = int(round(cx - target_w / 2.0))
+        target_y = int(round(cy - target_h / 2.0))
+        return _clamp_even_crop(target_x, target_y, target_w, target_h, src_w, src_h)
+    crop_w = max(2, int(round(src_w * 0.72)))
+    crop_h = max(2, int(round(src_h * 0.72)))
+    crop_x = max(0, (src_w - crop_w) // 2)
+    crop_y = max(0, (src_h - crop_h) // 2)
+    return _clamp_even_crop(crop_x, crop_y, crop_w, crop_h, src_w, src_h)
 
 
 def _initial_preview_time(video_info: VideoInfo, config: AppConfig) -> float:

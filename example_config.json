@@ -1,5 +1,7 @@
-{
+﻿{
   "input": "",
+  "input_start_sec": null,
+  "input_end_sec": null,
   "output_dir": "output",
   "temp_dir": "temp",
   "language": "auto",
@@ -14,6 +16,7 @@
   "subtitles_template_en": "subtitles/en.ass",
   "subtitles_between_y_ratio": 0.42,
   "whisper_model_cache_dir": "models/whisper",
+  "layout_mode": "auto",
   "webcam_detection": "auto",
   "webcam_edge_margin_ratio": 0.15,
   "manual_webcam_crop": null,
@@ -73,14 +76,6 @@
     "highlights": true,
     "layout": true
   },
-  "quick_preview": {
-    "enabled": false,
-    "only": true,
-    "duration_sec": 10.0,
-    "width": 720,
-    "height": 1280,
-    "output_dir": "output/preview"
-  },
   "cleanup_temp_files": true,
   "delete_input_after_success": false,
   "render_resume_enabled": true,
@@ -110,7 +105,6 @@
     "bgm_random_pick": true,
     "cta_text_variants": [
       "THE GAME IN BIO",
-      "LINK IN BIO",
       "BIO FOR MORE",
       "CHECK BIO",
       "MORE IN BIO"
@@ -124,7 +118,6 @@
     "available_themes": ["red", "purple", "black", "yellow"],
     "available_cta_texts": [
       "THE GAME IN BIO",
-      "LINK IN BIO",
       "BIO FOR MORE",
       "CHECK BIO",
       "MORE IN BIO"
@@ -137,3 +130,5 @@
   },
   "debug": false
 }
+
+

@@ -1,8 +1,10 @@
-# StreamCuter - Example Configuration
+﻿# StreamCuter - Example Configuration
 # Copy this file and edit paths/settings as needed.
 
 # Input: local file path or URL (YouTube/Kick VOD)
 input: ""
+input_start_sec:
+input_end_sec:
 
 # Directories
 output_dir: "output"
@@ -25,6 +27,7 @@ subtitles_between_y_ratio: 0.42
 whisper_model_cache_dir: "models/whisper"
 
 # Webcam detection
+layout_mode: "auto" # auto | slot_only | cinema
 webcam_detection: "auto"
 webcam_edge_margin_ratio: 0.15
 # Optional manual fallback crops: [x, y, width, height] in source-video pixels.
@@ -91,15 +94,6 @@ cache:
   highlights: true
   layout: true
 
-# Quick preview render (one short 720x1280 clip)
-quick_preview:
-  enabled: false
-  only: true
-  duration_sec: 10.0
-  width: 720
-  height: 1280
-  output_dir: "output/preview"
-
 # Cleanup
 cleanup_temp_files: true
 delete_input_after_success: false
@@ -133,7 +127,6 @@ variation:
   bgm_random_pick: true
   cta_text_variants:
     - "THE GAME IN BIO"
-    - "LINK IN BIO"
     - "BIO FOR MORE"
     - "CHECK BIO"
     - "MORE IN BIO"
@@ -150,13 +143,13 @@ bot_preset_fields:
     - "yellow"
   available_cta_texts:
     - "THE GAME IN BIO"
-    - "LINK IN BIO"
     - "BIO FOR MORE"
     - "CHECK BIO"
     - "MORE IN BIO"
   available_cta_texts_ru:
     - "ИГРА В ОПИСАНИИ"
     - "ССЫЛКА В ОПИСАНИИ"
+
   available_languages:
     - "auto"
     - "ru"
@@ -164,3 +157,5 @@ bot_preset_fields:
 
 # Debug mode
 debug: false
+
+

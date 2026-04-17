@@ -39,15 +39,14 @@ def cli_entry():
         help="Render preset: fast, balanced, quality, small, nvenc_fast, or custom",
     )
     parser.add_argument(
-        "--quick-preview",
-        action="store_true",
-        help="Render only one short 720p preview clip and exit",
+        "--input-start",
+        required=False,
+        help="Start offset within the input video in seconds, MM:SS, or HH:MM:SS",
     )
     parser.add_argument(
-        "--quick-preview-sec",
-        type=float,
+        "--input-end",
         required=False,
-        help="Quick preview duration in seconds",
+        help="End offset within the input video in seconds, MM:SS, or HH:MM:SS",
     )
     parser.add_argument("--no-cache", action="store_true", help="Disable persistent ASR/highlight/layout cache")
     parser.add_argument("--force-render", action="store_true", help="Re-render existing output clips instead of resuming")
@@ -56,6 +55,11 @@ def cli_entry():
     parser.add_argument("--cta-lang", choices=["auto", "ru", "en"], required=False, help="CTA text language")
     parser.add_argument("--cta-text", required=False, help="Custom CTA text for the freeze moment")
     parser.add_argument("--cta-text-file", required=False, help="Path to a file with CTA text variants, one per line")
+    parser.add_argument(
+        "--cookies-from-browser",
+        required=False,
+        help="Load yt-dlp cookies from a browser profile, for example chrome or chrome:Default",
+    )
     parser.add_argument(
         "--cta-text-mode",
         choices=["file", "custom", "variants"],
@@ -75,6 +79,12 @@ def cli_entry():
         "--preview-time",
         required=False,
         help="Initial layout preview time in seconds, MM:SS, or HH:MM:SS",
+    )
+    parser.add_argument(
+        "--layout-mode",
+        choices=["auto", "slot_only", "cinema"],
+        required=False,
+        help="Explicit no-webcam composition mode: auto, slot_only, or cinema",
     )
     parser.add_argument("--no-webcam", action="store_true", help="Force no webcam detection")
     music_group = parser.add_mutually_exclusive_group()
@@ -108,21 +118,12 @@ def cli_entry():
         config.input = args.input_path
     if args.output_dir:
         config.output_dir = args.output_dir
-        if config.quick_preview.output_dir == "output/preview":
-            import os
-
-            config.quick_preview.output_dir = os.path.join(args.output_dir, "preview")
     if args.temp_dir:
         config.temp_dir = args.temp_dir
     if args.clips:
         config.clips_override = args.clips
     if args.render_preset:
         config.export.render_preset = args.render_preset
-    if args.quick_preview:
-        config.quick_preview.enabled = True
-        config.quick_preview.only = True
-    if args.quick_preview_sec is not None:
-        config.quick_preview.duration_sec = max(1.0, float(args.quick_preview_sec))
     if args.no_cache:
         config.cache.enabled = False
     if args.force_render:
@@ -144,6 +145,10 @@ def cli_entry():
         config.cta.text_mode = "file"
     if args.cta_voice:
         config.cta.voice_mp3_path = args.cta_voice
+    if args.cookies_from_browser:
+        import os
+
+        os.environ["STREAMCUTER_COOKIES_FROM_BROWSER"] = args.cookies_from_browser
     if args.theme:
         config.subtitles_theme = args.theme
     if args.debug:
@@ -157,8 +162,38 @@ def cli_entry():
         except ValueError as e:
             console.print(f"[red]Invalid --preview-time: {e}[/red]")
             raise SystemExit(2)
+    if args.layout_mode:
+        config.layout_mode = args.layout_mode
+    if args.input_start:
+        try:
+            config.input_start_sec = _parse_time_sec(args.input_start)
+        except ValueError as e:
+            console.print(f"[red]Invalid --input-start: {e}[/red]")
+            raise SystemExit(2)
+    if args.input_end:
+        try:
+            config.input_end_sec = _parse_time_sec(args.input_end)
+        except ValueError as e:
+            console.print(f"[red]Invalid --input-end: {e}[/red]")
+            raise SystemExit(2)
+    if (
+        config.input_end_sec is not None
+        and config.input_start_sec is not None
+        and config.input_end_sec <= config.input_start_sec
+    ):
+        console.print("[red]--input-end must be greater than --input-start.[/red]")
+        raise SystemExit(2)
     if args.no_webcam:
         config.webcam_detection = "off"
+    layout_mode = str(getattr(config, "layout_mode", "auto") or "auto").lower()
+    if layout_mode == "slot_only":
+        config.webcam_detection = "off"
+        config.subtitles_position = "slot_top"
+    elif layout_mode == "cinema":
+        config.webcam_detection = "auto" if getattr(config, "manual_webcam_crop", None) else "off"
+        config.subtitles_position = (
+            "between_webcam_and_game" if getattr(config, "manual_webcam_crop", None) else "slot_top"
+        )
     if args.music:
         config.music.enabled = True
     elif args.no_music:
@@ -182,6 +217,11 @@ def cli_entry():
     if args.dry_run:
         console.print("[cyan]=== DRY RUN ===[/cyan]")
         console.print(f"Input: {config.input}")
+        console.print(
+            "Input range: "
+            f"start={config.input_start_sec if config.input_start_sec is not None else 0.0}, "
+            f"end={config.input_end_sec if config.input_end_sec is not None else 'source end'}"
+        )
         console.print(f"Output: {config.output_dir}")
         console.print(f"Temp: {config.temp_dir}")
         console.print(f"Language: {config.language}")
@@ -190,8 +230,10 @@ def cli_entry():
             f"(language={config.language}, theme={config.subtitles_theme}, position={config.subtitles_position})"
         )
         console.print(f"Webcam detection: {config.webcam_detection}")
+        console.print(f"Layout mode: {config.layout_mode}")
         console.print(f"Manual webcam crop: {config.manual_webcam_crop or 'none'}")
         console.print(f"Manual slot crop: {config.manual_slot_crop or 'none'}")
+        console.print(f"Manual cinema crop: {config.manual_cinema_crop or 'none'}")
         console.print(f"Layout preview selector: {config.layout_preview_enabled}")
         console.print(
             "Layout preview initial time: "
@@ -200,17 +242,31 @@ def cli_entry():
         console.print(f"Layout debug preview: {config.layout_debug_preview}")
         console.print(f"Layout selection save path: {config.layout_preview_save_path}")
         console.print(f"Music: {config.music.enabled}")
-        from app.cta_pause import effective_cta_language, pick_cta_text
+        from app.cta_pause import (
+            cta_disabled_reason,
+            cta_effectively_enabled,
+            effective_cta_language,
+            pick_cta_text,
+        )
+
+        cta_reason = cta_disabled_reason(config)
+        cta_enabled = cta_effectively_enabled(config)
 
         console.print(
-            f"CTA: {config.cta.enabled} "
+            f"CTA: {cta_enabled} "
             f"(language={config.cta.language}, effective_language={effective_cta_language(config)}, "
-            f"text_mode={config.cta.text_mode})"
+            f"text_mode={config.cta.text_mode}, disabled_reason={cta_reason or 'none'})"
         )
-        console.print(f"CTA effective text: {pick_cta_text(config) if config.cta.enabled else 'disabled'}")
+        if cta_reason == "cinema mode":
+            console.print("CTA disabled by cinema mode")
+        console.print(
+            f"CTA effective text: {pick_cta_text(config) if cta_enabled else 'disabled'}"
+        )
         console.print(f"CTA custom text: {config.cta.custom_text or 'none'}")
         console.print(f"CTA text file: {config.cta.text_file_path or 'language default'}")
-        console.print(f"CTA voice: {config.cta.voice_mp3_path or 'none'}")
+        console.print(
+            f"CTA voice: {(config.cta.voice_mp3_path or 'none') if cta_enabled else 'disabled'}"
+        )
         console.print(f"Delete input after success: {config.delete_input_after_success}")
         console.print(
             f"Export: {config.export.width}x{config.export.height}@{config.export.fps} "
@@ -226,11 +282,6 @@ def cli_entry():
         console.print(
             f"Cache: {config.cache.enabled} "
             f"(asr={config.cache.asr}, highlights={config.cache.highlights}, layout={config.cache.layout}, dir={config.cache.dir})"
-        )
-        console.print(
-            f"Quick preview: {config.quick_preview.enabled} "
-            f"(only={config.quick_preview.only}, duration={config.quick_preview.duration_sec}s, "
-            f"output={config.quick_preview.output_dir})"
         )
         console.print(f"Resume render: {config.render_resume_enabled}")
         console.print(f"Highlight report: {config.highlight_report_path}")

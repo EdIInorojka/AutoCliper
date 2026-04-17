@@ -107,6 +107,19 @@ def effective_cta_language(config: AppConfig) -> str:
     return language if language in {"ru", "en"} else "en"
 
 
+def cta_disabled_reason(config: AppConfig) -> Optional[str]:
+    layout_mode = str(getattr(config, "layout_mode", "auto") or "auto").lower()
+    if layout_mode == "cinema":
+        return "cinema mode"
+    if not getattr(config.cta, "enabled", True):
+        return "config"
+    return None
+
+
+def cta_effectively_enabled(config: AppConfig) -> bool:
+    return cta_disabled_reason(config) is None
+
+
 def _cta_language(config: AppConfig) -> str:
     return effective_cta_language(config)
 

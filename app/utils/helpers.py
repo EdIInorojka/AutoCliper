@@ -114,6 +114,39 @@ def ensure_dir(path: str | Path) -> Path:
     return p
 
 
+def cpu_thread_budget(
+    default_scale: float = 0.85,
+    override_env: str = "STREAMCUTER_CPU_THREADS",
+    scale_env: str = "STREAMCUTER_CPU_SCALE",
+    reserve_one_core: bool = True,
+) -> int:
+    """Return a conservative CPU thread budget for local processing.
+
+    The budget defaults to roughly 85% of logical cores and can be overridden
+    with STREAMCUTER_CPU_THREADS or STREAMCUTER_CPU_SCALE.
+    """
+    raw_override = os.environ.get(override_env, "").strip()
+    if raw_override and raw_override.lower() != "auto":
+        try:
+            value = int(raw_override)
+            if value > 0:
+                return value
+        except ValueError:
+            pass
+
+    raw_scale = os.environ.get(scale_env, "").strip()
+    try:
+        scale = float(raw_scale) if raw_scale else float(default_scale)
+    except ValueError:
+        scale = float(default_scale)
+
+    cpu_count = os.cpu_count() or 1
+    budget = max(1, int(round(cpu_count * scale)))
+    if reserve_one_core and cpu_count > 2:
+        budget = min(budget, cpu_count - 1)
+    return max(1, budget)
+
+
 def remove_tree(path: str | Path) -> None:
     p = Path(path)
     if p.exists():

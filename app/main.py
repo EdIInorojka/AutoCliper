@@ -11,9 +11,23 @@ console = get_console()
 
 def run_pipeline(config: AppConfig) -> None:
     """Execute the full StreamCuter pipeline."""
+    from app.cta_pause import cta_disabled_reason
+
+    layout_mode = str(getattr(config, "layout_mode", "auto") or "auto").lower()
+    if layout_mode == "slot_only":
+        config.webcam_detection = "off"
+        config.subtitles_position = "slot_top"
+    elif layout_mode == "cinema":
+        config.webcam_detection = "auto" if getattr(config, "manual_webcam_crop", None) else "off"
+        config.subtitles_position = (
+            "between_webcam_and_game" if getattr(config, "manual_webcam_crop", None) else "slot_top"
+        )
+
     console.print("\n[bold cyan]========================================[/bold cyan]")
     console.print("[bold cyan]       StreamCuter Pipeline               [/bold cyan]")
     console.print("[bold cyan]========================================[/bold cyan]\n")
+    if cta_disabled_reason(config) == "cinema mode":
+        console.print("[dim]CTA disabled by cinema mode[/dim]")
 
     # Step 0: Prerequisites
     console.print("[step 0] Checking prerequisites...")
@@ -34,10 +48,21 @@ def run_pipeline(config: AppConfig) -> None:
     console.print("\n[step 1] Resolving input...")
     from app.downloader import resolve_input
     try:
-        video_path = resolve_input(config.input, temp_dir)
+        resolved_input = resolve_input(
+            config.input,
+            temp_dir,
+            input_start_sec=getattr(config, "input_start_sec", None),
+            input_end_sec=getattr(config, "input_end_sec", None),
+        )
+        video_path = resolved_input.working_path
     except Exception as e:
         console.print(f"[red]Ingest failed: {e}[/red]")
         raise SystemExit(1)
+    if resolved_input.selected_range is not None:
+        start_sec, end_sec = resolved_input.selected_range
+        console.print(
+            f"[dim]Using selected input range: {start_sec:.1f}s - {end_sec:.1f}s[/dim]"
+        )
 
     # Step 2: Probe
     console.print("\n[step 2] Probing video...")
@@ -86,9 +111,13 @@ def run_pipeline(config: AppConfig) -> None:
                 content_result = None
                 console.print(
                     "[cyan]Layout preview applied: "
-                    f"mode={selection_mode}, webcam={config.manual_webcam_crop or 'none'}, "
-                    f"slot={config.manual_slot_crop or 'none'}[/cyan]"
+                    f"mode={selection_mode}, layout_mode={config.layout_mode}, "
+                    f"webcam={config.manual_webcam_crop or 'none'}, "
+                    f"slot={config.manual_slot_crop or 'none'}, "
+                    f"cinema={config.manual_cinema_crop or 'none'}[/cyan]"
                 )
+                if cta_disabled_reason(config) == "cinema mode":
+                    console.print("[dim]CTA disabled by cinema mode[/dim]")
                 if saved_path is not None:
                     console.print(f"[dim]Layout selection saved: {saved_path}[/dim]")
         except Exception as e:
@@ -171,29 +200,6 @@ def run_pipeline(config: AppConfig) -> None:
     from app.highlight_detector import write_highlight_report
     write_highlight_report(video_info, segments, config)
 
-    if config.quick_preview.enabled:
-        console.print("\n[step 7.5] Rendering quick preview...")
-        from app.renderer import render_quick_preview
-
-        preview_paths = render_quick_preview(
-            video_path=video_path,
-            video_info=video_info,
-            segments=segments,
-            layout=layout,
-            config=config,
-            temp_dir=temp_dir,
-            asr_words=asr_words if asr_words else None,
-        )
-        if config.quick_preview.only:
-            if config.cleanup_temp_files:
-                from app.cleanup import cleanup_temp_files
-
-                cleanup_temp_files(temp_dir)
-            console.print(
-                f"\n[bold green]Quick preview ready: {preview_paths[0] if preview_paths else 'not created'}[/bold green]"
-            )
-            return
-
     # Step 8: Render clips
     console.print("\n[step 8] Rendering clips...")
     from app.renderer import render_all_clips
@@ -226,7 +232,8 @@ def run_pipeline(config: AppConfig) -> None:
 
     if config.delete_input_after_success:
         from app.cleanup import delete_input_after_success
-        delete_input_after_success(video_path, output_paths)
+        delete_target = resolved_input.delete_target or video_path
+        delete_input_after_success(delete_target, output_paths)
 
     # Summary
     console.print(f"\n[bold green]Done! {len(output_paths)} clips saved to {output_dir}[/bold green]")

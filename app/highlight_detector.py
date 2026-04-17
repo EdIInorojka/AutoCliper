@@ -40,39 +40,108 @@ def _extract_audio_wav(video_path: str, temp_dir: str) -> str:
     import subprocess
     cmd = [
         ffmpeg_exe(), "-y", "-i", video_path,
-        "-vn", "-acodec", "pcm_s16le", "-ar", "22050", "-ac", "1",
+        "-vn", "-acodec", "pcm_s16le", "-ar", "8000", "-ac", "1",
         out_path,
     ]
     subprocess.run(cmd, capture_output=True, check=True)
     return out_path
 
 
+def _load_audio_samples(audio_path: str):
+    """Load mono audio samples for analysis without librosa."""
+    try:
+        import numpy as np
+        import soundfile as sf
+    except ImportError as exc:
+        raise ImportError("soundfile/numpy unavailable") from exc
+
+    samples, sr = sf.read(audio_path, dtype="float32", always_2d=True)
+    if samples.size == 0:
+        return np.zeros(0, dtype=np.float32), 8000.0
+
+    mono = samples.mean(axis=1, dtype=np.float32)
+
+    return mono.astype(np.float32, copy=False), float(sr)
+
+
+def _compute_audio_feature_bundle(audio_path: str) -> tuple[Any, Any, Any, float]:
+    """Compute energy, brightness proxy, and onset proxy in one pass."""
+    import numpy as np
+
+    samples, sr = _load_audio_samples(audio_path)
+    if samples.size == 0:
+        zeros = np.zeros(1, dtype=np.float32)
+        return zeros, zeros, zeros, sr
+
+    # Coarse windows keep the analysis responsive on very long clips.
+    frame_length = max(1024, int(round(sr * 2.0)))
+    hop_length = max(512, int(round(sr * 1.0)))
+
+    if samples.size < frame_length:
+        samples = np.pad(samples, (0, frame_length - samples.size))
+
+    starts = np.arange(0, samples.size - frame_length + 1, hop_length, dtype=np.int64)
+    if starts.size == 0:
+        starts = np.array([0], dtype=np.int64)
+
+    squares = np.square(samples, dtype=np.float32)
+    cumulative = np.concatenate((
+        np.zeros(1, dtype=np.float32),
+        np.cumsum(squares, dtype=np.float32),
+    ))
+    energy = cumulative[starts + frame_length] - cumulative[starts]
+    rms = np.sqrt(energy / float(frame_length)).astype(np.float32)
+
+    diffs = np.abs(np.diff(samples)).astype(np.float32, copy=False)
+    if diffs.size == 0:
+        brightness = np.zeros_like(rms)
+    else:
+        diff_cumulative = np.concatenate((
+            np.zeros(1, dtype=np.float32),
+            np.cumsum(diffs, dtype=np.float32),
+        ))
+        diff_starts = np.minimum(starts, diffs.size)
+        diff_ends = np.minimum(starts + max(1, frame_length - 1), diffs.size)
+        diff_energy = diff_cumulative[diff_ends] - diff_cumulative[diff_starts]
+        brightness = (diff_energy / np.maximum(1, diff_ends - diff_starts)).astype(np.float32)
+
+    rms_delta = np.maximum(0.0, np.diff(rms, prepend=rms[0]))
+    brightness_delta = np.maximum(0.0, np.diff(brightness, prepend=brightness[0]))
+    onset = (rms_delta + 0.5 * brightness_delta).astype(np.float32)
+
+    return rms, brightness, onset, sr
+
+
 def compute_audio_energy(audio_path: str) -> tuple[Any, float]:
     """Compute per-frame audio energy."""
-    import librosa
-
-    y, sr = librosa.load(audio_path, sr=22050)
-    # RMS energy per frame (hop=512 ≈ 23ms)
-    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
+    rms, _, _, sr = _compute_audio_feature_bundle(audio_path)
     return rms, sr
 
 
 def compute_spectral_centroid(audio_path: str) -> Any:
     """Spectral centroid as brightness/emotion proxy."""
-    import librosa
-
-    y, sr = librosa.load(audio_path, sr=22050)
-    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=512)[0]
-    return centroid
+    _, brightness, _, _ = _compute_audio_feature_bundle(audio_path)
+    return brightness
 
 
 def compute_onset_strength(audio_path: str) -> Any:
     """Onset strength envelope for beat/transient detection."""
-    import librosa
-
-    y, sr = librosa.load(audio_path, sr=22050)
-    onset = librosa.onset.onset_strength(y=y, sr=sr, hop_length=512)
+    _, _, onset, _ = _compute_audio_feature_bundle(audio_path)
     return onset
+
+
+def _highlight_stage(step: int, total: int, message: str) -> None:
+    console.print(f"[cyan][{step}/{total}] {message}[/cyan]")
+
+
+def _highlight_feature_cache_extra(video_info: VideoInfo) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "duration": round(float(video_info.duration_sec or 0.0), 3),
+        "analysis_rate": 8000,
+        "frame_sec": 2.0,
+        "hop_sec": 1.0,
+    }
 
 
 def find_highlights(
@@ -103,48 +172,83 @@ def find_highlights(
             console.print(f"[green]Highlight cache hit: {len(segments)} segments[/green]")
             return segments
 
-    console.print("[cyan]Extracting audio for highlight analysis...[/cyan]")
+    feature_cache_extra = _highlight_feature_cache_extra(video_info)
+    audio_path = None
+    rms = centroid = onset = sr = None
 
-    try:
-        audio_path = _extract_audio_wav(video_path, temp_dir)
-    except Exception as e:
-        console.print(f"[yellow]Audio extraction failed, using fallback highlights: {e}[/yellow]")
-        segments = _fallback_highlights(video_info, config)
-        segments = _apply_duration_variation(segments, video_info, config)
-        _save_highlight_cache(config, video_path, cache_extra, segments)
-        return segments
+    _highlight_stage(1, 6, "Loading cached audio features...")
+    feature_cached = load_json_cache(config, "highlight_features", video_path, feature_cache_extra)
+    if feature_cached:
+        try:
+            import numpy as np
 
-    if not os.path.exists(audio_path):
-        console.print("[yellow]Audio extraction failed, using fallback highlights[/yellow]")
-        segments = _fallback_highlights(video_info, config)
-        segments = _apply_duration_variation(segments, video_info, config)
-        _save_highlight_cache(config, video_path, cache_extra, segments)
-        return segments
+            rms = np.asarray(feature_cached.get("rms") or [], dtype=np.float32)
+            centroid = np.asarray(feature_cached.get("centroid") or [], dtype=np.float32)
+            onset = np.asarray(feature_cached.get("onset") or [], dtype=np.float32)
+            sr = float(feature_cached.get("sr") or 0.0)
+            if rms.size and centroid.size and onset.size and sr > 0:
+                console.print(
+                    f"[green]Highlight feature cache hit: {len(rms)} frames at {sr:.0f} Hz[/green]"
+                )
+            else:
+                rms = centroid = onset = sr = None
+        except Exception:
+            rms = centroid = onset = sr = None
 
-    console.print("[cyan]Computing audio features...[/cyan]")
+    if rms is None or centroid is None or onset is None or sr is None:
+        _highlight_stage(2, 6, "Extracting audio for highlight analysis...")
+        try:
+            audio_path = _extract_audio_wav(video_path, temp_dir)
+        except Exception as e:
+            console.print(f"[yellow]Audio extraction failed, using fallback highlights: {e}[/yellow]")
+            segments = _fallback_highlights(video_info, config)
+            segments = _apply_duration_variation(segments, video_info, config)
+            _save_highlight_cache(config, video_path, cache_extra, segments)
+            return segments
 
-    try:
+        if not os.path.exists(audio_path):
+            console.print("[yellow]Audio extraction failed, using fallback highlights[/yellow]")
+            segments = _fallback_highlights(video_info, config)
+            segments = _apply_duration_variation(segments, video_info, config)
+            _save_highlight_cache(config, video_path, cache_extra, segments)
+            return segments
+
+        _highlight_stage(3, 6, "Computing audio features...")
+        try:
+            import numpy as np
+            from scipy.ndimage import uniform_filter1d
+
+            rms, centroid, onset, sr = _compute_audio_feature_bundle(audio_path)
+            console.print(
+                f"[dim]Audio features ready: {len(rms)} frames at {sr:.0f} Hz analysis rate[/dim]"
+            )
+            save_json_cache(
+                config,
+                "highlight_features",
+                video_path,
+                {
+                    "rms": rms.tolist(),
+                    "centroid": centroid.tolist(),
+                    "onset": onset.tolist(),
+                    "sr": sr,
+                },
+                feature_cache_extra,
+            )
+        except ImportError:
+            console.print("[yellow]soundfile/scipy not installed; using fallback highlights[/yellow]")
+            segments = _fallback_highlights(video_info, config)
+            segments = _apply_duration_variation(segments, video_info, config)
+            _save_highlight_cache(config, video_path, cache_extra, segments)
+            return segments
+        except Exception as e:
+            console.print(f"[yellow]Audio analysis failed, using fallback highlights: {e}[/yellow]")
+            segments = _fallback_highlights(video_info, config)
+            segments = _apply_duration_variation(segments, video_info, config)
+            _save_highlight_cache(config, video_path, cache_extra, segments)
+            return segments
+    else:
         import numpy as np
-    except ImportError:
-        console.print("[yellow]numpy not installed; using fallback highlights[/yellow]")
-        segments = _fallback_highlights(video_info, config)
-        segments = _apply_duration_variation(segments, video_info, config)
-        _save_highlight_cache(config, video_path, cache_extra, segments)
-        return segments
-
-    try:
-        import librosa  # noqa: F401
         from scipy.ndimage import uniform_filter1d
-    except ImportError:
-        console.print("[yellow]librosa/scipy not installed; using fallback highlights[/yellow]")
-        segments = _fallback_highlights(video_info, config)
-        segments = _apply_duration_variation(segments, video_info, config)
-        _save_highlight_cache(config, video_path, cache_extra, segments)
-        return segments
-
-    rms, sr = compute_audio_energy(audio_path)
-    centroid = compute_spectral_centroid(audio_path)
-    onset = compute_onset_strength(audio_path)
 
     # Normalize all features to 0-1
     def normalize(x):
@@ -163,13 +267,16 @@ def find_highlights(
     centroid_norm = centroid_norm[:min_len]
     onset_norm = onset_norm[:min_len]
 
-    # Composite energy score per frame
-    hop_duration = 512 / 22050  # ~23ms
+    # Composite energy score per frame. The analysis now uses coarse 1s hops
+    # so long videos stay responsive.
+    hop_duration = 1.0 if sr <= 0 else (max(512, int(round(sr * 1.0))) / sr)
     combined = 0.4 * rms_norm + 0.3 * centroid_norm + 0.3 * onset_norm
 
-    # Smooth with moving average (1 second window)
-    window_frames = max(1, int(1.0 / hop_duration))
+    # Smooth with a short moving average window.
+    window_frames = max(3, int(5.0 / hop_duration))
     combined_smooth = uniform_filter1d(combined, size=window_frames)
+
+    _highlight_stage(4, 6, "Merging ASR density...")
 
     # ASR word density bonus
     if asr_words:
@@ -180,18 +287,22 @@ def find_highlights(
             if 0 <= t < total_duration:
                 frame_idx = int(t / hop_duration)
                 if frame_idx < len(asr_density):
-                    # Spread word presence over ~1 second
-                    spread = int(1.0 / hop_duration)
+                    # Spread word presence over a couple of frames.
+                    spread = max(1, int(2.0 / hop_duration))
                     start = max(0, frame_idx - spread // 2)
-                    end = min(len(asr_density), frame_idx + spread // 2)
+                    end = min(len(asr_density), frame_idx + spread // 2 + 1)
                     asr_density[start:end] += 1.0
         if np.max(asr_density) > 0:
             asr_density = normalize(asr_density)
             combined_smooth = 0.7 * combined_smooth + 0.3 * asr_density
 
+    _highlight_stage(5, 6, "Finding peaks...")
+
     # Find peaks
     threshold = np.mean(combined_smooth) + 0.5 * np.std(combined_smooth)
     peaks = _find_peaks(combined_smooth, threshold, min_distance_sec=8.0, hop_duration=hop_duration)
+
+    _highlight_stage(6, 6, "Scoring candidates...")
 
     # Create candidate windows around peaks
     candidates = []
@@ -318,7 +429,7 @@ def _highlight_cache_extra(
     asr_words: Optional[list[dict]],
 ) -> dict[str, Any]:
     return {
-        "version": 3,
+        "version": 4,
         "duration": round(float(video_info.duration_sec or 0.0), 3),
         "clips": config.clips_override,
         "target_per_hour": config.highlight_target_count_per_hour,
@@ -397,31 +508,34 @@ def _find_peaks(
     hop_duration: float,
 ) -> list[int]:
     """Find local maxima above threshold with minimum distance."""
-    min_distance_frames = int(min_distance_sec / hop_duration)
-    peaks = []
-    i = 0
-    while i < len(signal):
-        if signal[i] > threshold:
-            # Find local max in neighborhood
-            j = i
-            while j < len(signal) and signal[j] >= signal[i]:
-                j += 1
-            # Check left side too
-            left = i
-            while left > 0 and signal[left - 1] >= signal[i]:
-                left -= 1
+    min_distance_frames = max(1, int(min_distance_sec / max(hop_duration, 1e-6)))
 
-            peak_idx = i
-            peak_val = signal[i]
-            for k in range(left, min(j, len(signal))):
-                if signal[k] > peak_val:
-                    peak_val = signal[k]
-                    peak_idx = k
+    try:
+        from scipy.signal import find_peaks as scipy_find_peaks
 
-            peaks.append(peak_idx)
-            i = peak_idx + min_distance_frames
-        else:
-            i += 1
+        peaks, _ = scipy_find_peaks(signal, height=threshold, distance=min_distance_frames)
+        return [int(p) for p in peaks.tolist()]
+    except Exception:
+        pass
+
+    peaks: list[int] = []
+    last_peak = -min_distance_frames
+    for idx in range(1, len(signal) - 1):
+        value = signal[idx]
+        if value <= threshold:
+            continue
+        if value < signal[idx - 1] or value < signal[idx + 1]:
+            continue
+        if idx - last_peak < min_distance_frames:
+            if peaks and value > signal[peaks[-1]]:
+                peaks[-1] = idx
+                last_peak = idx
+            continue
+        peaks.append(idx)
+        last_peak = idx
+
+    if len(signal) == 1 and signal[0] > threshold:
+        return [0]
     return peaks
 
 
