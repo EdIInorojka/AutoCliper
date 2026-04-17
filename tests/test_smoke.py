@@ -196,6 +196,31 @@ class TestHelpers(unittest.TestCase):
 
         self.assertTrue(path.endswith("Dp5pvB6giJQ__range_1339000_1870000.part.mp4"))
 
+    def test_range_progress_line_renders_byte_progress(self):
+        from app.downloader import _format_range_progress_line
+
+        line = _format_range_progress_line(512, total_bytes=1024, tick=0)
+
+        self.assertIn("Range download [", line)
+        self.assertIn(" 50%", line)
+        self.assertIn("512 B/1.0 KiB", line)
+
+    def test_range_progress_line_renders_indeterminate_bar(self):
+        from app.downloader import _format_range_progress_line
+
+        line = _format_range_progress_line(2 * 1024 * 1024, tick=3)
+
+        self.assertIn("Range download [", line)
+        self.assertIn("2.0 MiB", line)
+
+    def test_range_progress_line_shows_elapsed_when_no_bytes_visible_yet(self):
+        from app.downloader import _format_range_progress_line
+
+        line = _format_range_progress_line(0, tick=2, elapsed_sec=12.0)
+
+        self.assertIn("Range download [", line)
+        self.assertIn("12s", line)
+
     def test_remote_extract_error_mapping_detects_stale_cookies(self):
         from app.downloader import _friendly_remote_extract_error_message
 

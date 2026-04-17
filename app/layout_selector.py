@@ -434,6 +434,17 @@ def select_layout_crops(
         )
         root.destroy()
 
+    def on_clear_webcam() -> None:
+        if state["webcam"] is None:
+            status.set("Webcam is already cleared.")
+            return
+        state["webcam"] = None
+        if state["mode"] == "cinema":
+            status.set("Webcam cleared. Cinema frame stays active.")
+        else:
+            status.set("Webcam cleared.")
+        redraw()
+
     def on_apply_cinema() -> None:
         if state["cinema"] is None:
             seed_crop = state["slot"] or state["webcam"]
@@ -469,6 +480,16 @@ def select_layout_crops(
         18,
     )
     webcam_button.pack(side=tk.LEFT, padx=(8, 6), pady=8)
+    clear_webcam_button = styled_button(
+        toolbar,
+        "Clear webcam",
+        THEME["line"],
+        THEME["panel_2"],
+        on_clear_webcam,
+        16,
+    )
+    clear_webcam_button.configure(fg=THEME["text"], activeforeground=THEME["text"])
+    clear_webcam_button.pack(side=tk.LEFT, padx=(0, 6), pady=8)
     slot_button = styled_button(
         toolbar,
         "Select slot",

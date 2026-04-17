@@ -7,6 +7,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -457,41 +458,208 @@ class _QuietYdlLogger:
         return None
 
 
-def _range_progress_hook_factory() -> Callable[[dict], None]:
-    state = {"last_percent": -5}
+def _format_progress_bytes(num_bytes: float) -> str:
+    value = max(0.0, float(num_bytes))
+    units = ["B", "KiB", "MiB", "GiB"]
+    unit_index = 0
+    while value >= 1024.0 and unit_index < len(units) - 1:
+        value /= 1024.0
+        unit_index += 1
+    if unit_index == 0:
+        return f"{int(value)} {units[unit_index]}"
+    return f"{value:.1f} {units[unit_index]}"
 
-    def _emit(percent: int, detail: str) -> None:
-        percent = max(0, min(100, int(percent)))
-        if percent >= state["last_percent"] + 5 or percent == 100:
-            state["last_percent"] = percent
-            console.print(f"[dim]Range download progress: {percent}%{detail}[/dim]")
 
-    def _hook(data: dict) -> None:
+def _pulse_bar(width: int, tick: int) -> str:
+    width = max(8, int(width))
+    pulse_w = min(5, max(2, width // 4))
+    travel = max(1, width - pulse_w)
+    step = tick % (travel * 2)
+    start = step if step <= travel else (travel * 2 - step)
+    chars = [" "] * width
+    for index in range(start, min(width, start + pulse_w)):
+        chars[index] = "=" if index < start + pulse_w - 1 else ">"
+    return "".join(chars)
+
+
+def _determinate_bar(percent: float, width: int) -> str:
+    width = max(8, int(width))
+    clamped = max(0.0, min(100.0, float(percent)))
+    filled = int(round((clamped / 100.0) * width))
+    if filled >= width:
+        return "=" * width
+    if filled <= 0:
+        return ">" + (" " * (width - 1))
+    return ("=" * max(0, filled - 1)) + ">" + (" " * (width - filled))
+
+
+def _format_range_progress_line(
+    current_bytes: float,
+    *,
+    total_bytes: float | None = None,
+    fragment_index: int | None = None,
+    fragment_count: int | None = None,
+    elapsed_sec: float = 0.0,
+    tick: int = 0,
+    completed: bool = False,
+    width: int = 22,
+) -> str:
+    if total_bytes and total_bytes > 0:
+        percent = 100.0 if completed else (float(current_bytes) / max(float(total_bytes), 1.0)) * 100.0
+        bar = _determinate_bar(percent, width)
+        return (
+            f"Range download [{bar}] {int(max(0.0, min(100.0, percent))):3d}% "
+            f"{_format_progress_bytes(current_bytes)}/{_format_progress_bytes(total_bytes)}"
+        )
+    if fragment_count and fragment_count > 0:
+        percent = 100.0 if completed else (float(fragment_index or 0) / float(fragment_count)) * 100.0
+        bar = _determinate_bar(percent, width)
+        shown_index = fragment_count if completed else max(0, int(fragment_index or 0))
+        return (
+            f"Range download [{bar}] {int(max(0.0, min(100.0, percent))):3d}% "
+            f"{shown_index}/{int(fragment_count)} fragments"
+        )
+    bar = "=" * width if completed else _pulse_bar(width, tick)
+    if completed:
+        suffix = "done"
+    elif current_bytes > 0:
+        suffix = _format_progress_bytes(current_bytes)
+    else:
+        suffix = f"{max(0.0, elapsed_sec):.0f}s"
+    return f"Range download [{bar}] {suffix}"
+
+
+class _RangeProgressDisplay:
+    def __init__(self, out_path: str, part_path: str):
+        self.out_path = out_path
+        self.part_path = part_path
+        self.enabled = os.environ.get("STREAMCUTER_LIVE_PROGRESS", "1") != "0"
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._last_line_len = 0
+        self._tick = 0
+        self._downloaded_bytes = 0.0
+        self._total_bytes: float | None = None
+        self._fragment_index: int | None = None
+        self._fragment_count: int | None = None
+        self._completed = False
+        self._started_at = time.monotonic()
+
+    def start(self) -> None:
+        if not self.enabled:
+            return
+        self._thread = threading.Thread(target=self._render_loop, daemon=True)
+        self._thread.start()
+
+    def update_from_hook(self, data: dict) -> None:
         status = str(data.get("status") or "")
-        if status == "finished":
-            _emit(100, "")
-            return
-        if status != "downloading":
-            return
+        with self._lock:
+            downloaded = data.get("downloaded_bytes")
+            if downloaded is not None:
+                try:
+                    self._downloaded_bytes = max(self._downloaded_bytes, float(downloaded))
+                except Exception:
+                    pass
+            total = data.get("total_bytes") or data.get("total_bytes_estimate")
+            if total is not None:
+                try:
+                    self._total_bytes = float(total)
+                except Exception:
+                    pass
+            fragment_count = data.get("fragment_count")
+            if fragment_count is not None:
+                try:
+                    self._fragment_count = int(fragment_count)
+                except Exception:
+                    pass
+            fragment_index = data.get("fragment_index")
+            if fragment_index is not None:
+                try:
+                    self._fragment_index = int(fragment_index)
+                except Exception:
+                    pass
+            if status == "finished":
+                self._completed = True
+                if self._total_bytes is not None:
+                    self._downloaded_bytes = max(self._downloaded_bytes, self._total_bytes)
+                if self._fragment_count is not None:
+                    self._fragment_index = self._fragment_count
 
-        total = data.get("total_bytes") or data.get("total_bytes_estimate")
-        downloaded = data.get("downloaded_bytes")
-        if total and downloaded is not None:
-            try:
-                percent = int((float(downloaded) / max(float(total), 1.0)) * 100.0)
-            except Exception:
-                percent = 0
-            _emit(percent, "")
+    def finish(self) -> None:
+        if not self.enabled:
             return
+        with self._lock:
+            self._completed = True
+            current_size = self._current_file_size()
+            self._downloaded_bytes = max(self._downloaded_bytes, current_size)
+            if self._total_bytes is not None:
+                self._downloaded_bytes = max(self._downloaded_bytes, self._total_bytes)
+            if self._fragment_count is not None:
+                self._fragment_index = self._fragment_count
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        self._write_line(self._snapshot_line(completed=True), final=True)
 
-        fragment_index = data.get("fragment_index")
-        fragment_count = data.get("fragment_count")
-        if fragment_index and fragment_count:
+    def fail(self) -> None:
+        if not self.enabled:
+            return
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self._last_line_len:
+            self._write_line("", final=True)
+
+    def _render_loop(self) -> None:
+        while not self._stop.wait(0.15):
+            self._tick += 1
+            self._write_line(self._snapshot_line(completed=False), final=False)
+
+    def _snapshot_line(self, *, completed: bool) -> str:
+        with self._lock:
+            current_bytes = max(self._downloaded_bytes, self._current_file_size())
+            return _format_range_progress_line(
+                current_bytes,
+                total_bytes=self._total_bytes,
+                fragment_index=self._fragment_index,
+                fragment_count=self._fragment_count,
+                elapsed_sec=time.monotonic() - self._started_at,
+                tick=self._tick,
+                completed=completed,
+            )
+
+    def _current_file_size(self) -> float:
+        best_size = 0.0
+        for candidate in (self.part_path, self.out_path):
             try:
-                percent = int((float(fragment_index) / max(float(fragment_count), 1.0)) * 100.0)
-            except Exception:
-                percent = 0
-            _emit(percent, f" ({int(fragment_index)}/{int(fragment_count)} fragments)")
+                path = Path(candidate)
+                if path.exists():
+                    best_size = max(best_size, float(path.stat().st_size))
+                parent = path.parent
+                pattern = f"{path.name}*"
+                if parent.exists():
+                    for sibling in parent.glob(pattern):
+                        if sibling.is_file():
+                            best_size = max(best_size, float(sibling.stat().st_size))
+            except OSError:
+                continue
+        return best_size
+
+    def _write_line(self, line: str, *, final: bool) -> None:
+        padded = line.ljust(self._last_line_len)
+        sys.stdout.write("\r" + padded)
+        if final:
+            sys.stdout.write("\n")
+            self._last_line_len = 0
+        else:
+            self._last_line_len = max(self._last_line_len, len(line))
+        sys.stdout.flush()
+
+
+def _range_progress_hook_factory(display: _RangeProgressDisplay) -> Callable[[dict], None]:
+    def _hook(data: dict) -> None:
+        display.update_from_hook(data)
 
     return _hook
 
@@ -627,10 +795,18 @@ def _download_remote_range_with_yt_dlp(yt_dlp, url: str, temp_dir: str, start_se
     ydl_opts["no_warnings"] = True
     ydl_opts["noprogress"] = True
     ydl_opts["logger"] = _QuietYdlLogger()
-    ydl_opts["progress_hooks"] = [_range_progress_hook_factory()]
+    progress_display = _RangeProgressDisplay(out_path, part_path)
+    ydl_opts["progress_hooks"] = [_range_progress_hook_factory(progress_display)]
     console.print("[dim]Range stage: start yt-dlp partial download[/dim]")
     console.print(f"[dim]Range destination: {out_path}[/dim]")
-    _download_with_retry(yt_dlp, url, ydl_opts, temp_dir)
+    progress_display.start()
+    try:
+        _download_with_retry(yt_dlp, url, ydl_opts, temp_dir)
+    except Exception:
+        progress_display.fail()
+        raise
+    else:
+        progress_display.finish()
     console.print("[dim]Range stage: finalize[/dim]")
     if not _is_completed_download(out_path):
         raise RuntimeError("Selected-range download did not produce a complete file.")
