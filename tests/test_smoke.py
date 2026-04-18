@@ -34,7 +34,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.cinema_music.volume, 0.08)
         self.assertTrue(config.cinema_music.ending_enabled)
         self.assertEqual(config.cinema_music.ending_duration_sec, 4.5)
-        self.assertEqual(config.cinema_music.ending_volume, 1.0)
+        self.assertEqual(config.cinema_music.ending_volume, 0.70)
         self.assertEqual(config.layout_mode, "auto")
         self.assertEqual(config.webcam_edge_margin_ratio, 0.15)
         self.assertIsNone(config.manual_webcam_crop)
@@ -1061,11 +1061,11 @@ class TestAudioMix(unittest.TestCase):
                 has_original_audio=True,
                 final_duration_sec=30.0,
                 music_volume=0.08,
-                music_ending_volume=1.0,
+                music_ending_volume=0.70,
                 music_ending_duration_sec=4.5,
             )
 
-        self.assertIn("if(gte(t\\,25.500)\\,1.000\\,0.080)", filter_str)
+        self.assertIn("if(gte(t\\,25.500)\\,0.700\\,0.080)", filter_str)
         self.assertIn(":eval=frame", filter_str)
 
 
@@ -1156,7 +1156,7 @@ class TestRenderer(unittest.TestCase):
 
         self.assertEqual(Path(music_path).name, "cinema.mp3")
         self.assertEqual(music_volume, 0.10)
-        self.assertEqual(ending_volume, 1.0)
+        self.assertEqual(ending_volume, 0.70)
         self.assertEqual(ending_duration, 4.5)
 
     def test_cta_freeze_duration_prefers_voice_duration(self):

@@ -76,7 +76,7 @@ class CinemaMusicConfig:
     volume: float = 0.08
     ending_enabled: bool = True
     ending_duration_sec: float = 4.5
-    ending_volume: float = 1.0
+    ending_volume: float = 0.70
 
 
 @dataclass

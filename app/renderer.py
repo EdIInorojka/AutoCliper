@@ -397,9 +397,9 @@ def _cinema_music_ending(config: AppConfig) -> tuple[Optional[float], float]:
         return None, 0.0
 
     try:
-        ending_volume = float(getattr(cinema_music, "ending_volume", 1.0))
+        ending_volume = float(getattr(cinema_music, "ending_volume", 0.70))
     except (TypeError, ValueError):
-        ending_volume = 1.0
+        ending_volume = 0.70
     ending_volume = max(0.0, min(1.0, ending_volume))
     return ending_volume, ending_duration
 

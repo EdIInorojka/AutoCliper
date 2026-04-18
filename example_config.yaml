@@ -95,7 +95,7 @@ cinema_music:
   volume: 0.08
   ending_enabled: true
   ending_duration_sec: 4.5
-  ending_volume: 1.0
+  ending_volume: 0.70
 
 # Persistent caches for expensive analysis
 cache:

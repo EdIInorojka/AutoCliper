@@ -257,7 +257,8 @@ def cli_entry():
             f"{config.cinema_music.enabled} "
             f"(folder={config.cinema_music.folder}, "
             f"base_volume={min(config.cinema_music.volume, 0.10):.2f}, "
-            f"ending={config.cinema_music.ending_duration_sec:.1f}s)"
+            f"ending={config.cinema_music.ending_duration_sec:.1f}s "
+            f"at {min(config.cinema_music.ending_volume, 1.0):.2f})"
         )
         from app.cta_pause import (
             cta_disabled_reason,
