@@ -126,7 +126,12 @@ def render_clip(
 
     # Background music is intentionally cinema-only. Normal webcam/slot clips
     # stay clean even when legacy music config is enabled.
-    music_path, music_volume = _select_cinema_music(layout, config)
+    (
+        music_path,
+        music_volume,
+        music_ending_volume,
+        music_ending_duration_sec,
+    ) = _select_cinema_music(layout, config)
 
     # Build filter complex
     filter_complex, output_label, audio_meta = _build_filter_chain(
@@ -138,6 +143,8 @@ def render_clip(
         ass_path=ass_path,
         music_path=music_path,
         music_volume=music_volume,
+        music_ending_volume=music_ending_volume,
+        music_ending_duration_sec=music_ending_duration_sec,
         voice_path=voice_path,
         clip_index=clip_index,
         cta_text=cta_text,
@@ -229,6 +236,8 @@ def _build_filter_chain(
     ass_path: Optional[str],
     music_path: Optional[str],
     music_volume: Optional[float] = None,
+    music_ending_volume: Optional[float] = None,
+    music_ending_duration_sec: float = 0.0,
     voice_path: Optional[str] = None,
     clip_index: int = 0,
     cta_text: Optional[str] = None,
@@ -313,6 +322,8 @@ def _build_filter_chain(
         cta_insert_start_sec=cta_start,
         cta_insert_duration_sec=cta_insert_duration,
         music_volume=music_volume,
+        music_ending_volume=music_ending_volume,
+        music_ending_duration_sec=music_ending_duration_sec,
     )
     if audio_filter:
         for part in audio_filter.split(";"):
@@ -325,25 +336,35 @@ def _build_filter_chain(
     return full_filter, current_label, {"has_audio_out": True}
 
 
-def _select_cinema_music(layout: LayoutSpec, config: AppConfig) -> tuple[Optional[str], Optional[float]]:
-    """Pick a 10%-max background track only for Apply Cinema output."""
+def _select_cinema_music(
+    layout: LayoutSpec,
+    config: AppConfig,
+) -> tuple[Optional[str], Optional[float], Optional[float], float]:
+    """Pick quiet cinema music plus an optional loud ending."""
     if not _is_cinema_render(layout, config):
-        return None, None
+        return None, None, None, 0.0
 
     cinema_music = getattr(config, "cinema_music", None)
     if cinema_music is None or not bool(getattr(cinema_music, "enabled", True)):
         console.print("[dim]Cinema music: disabled[/dim]")
-        return None, None
+        return None, None, None, 0.0
 
     folder = str(getattr(cinema_music, "folder", "musiccinema") or "musiccinema")
     music_path = pick_random_track(folder, config)
     if not music_path:
         console.print("[dim]Cinema music: no tracks, rendering without music[/dim]")
-        return None, None
+        return None, None, None, 0.0
 
     volume = _cinema_music_volume(config)
-    console.print(f"[dim]Cinema music: {Path(music_path).name} at {volume:.0%}[/dim]")
-    return music_path, volume
+    ending_volume, ending_duration = _cinema_music_ending(config)
+    if ending_volume is None:
+        console.print(f"[dim]Cinema music: {Path(music_path).name} at {volume:.0%}[/dim]")
+    else:
+        console.print(
+            f"[dim]Cinema music: {Path(music_path).name} at {volume:.0%}, "
+            f"ending {ending_duration:.1f}s at {ending_volume:.0%}[/dim]"
+        )
+    return music_path, volume, ending_volume, ending_duration
 
 
 def _is_cinema_render(layout: LayoutSpec, config: AppConfig) -> bool:
@@ -354,12 +375,33 @@ def _is_cinema_render(layout: LayoutSpec, config: AppConfig) -> bool:
 
 def _cinema_music_volume(config: AppConfig) -> float:
     cinema_music = getattr(config, "cinema_music", None)
-    raw = getattr(cinema_music, "volume", 0.10) if cinema_music is not None else 0.10
+    raw = getattr(cinema_music, "volume", 0.08) if cinema_music is not None else 0.08
     try:
         volume = float(raw)
     except (TypeError, ValueError):
-        volume = 0.10
+        volume = 0.08
     return max(0.0, min(0.10, volume))
+
+
+def _cinema_music_ending(config: AppConfig) -> tuple[Optional[float], float]:
+    cinema_music = getattr(config, "cinema_music", None)
+    if cinema_music is None or not bool(getattr(cinema_music, "ending_enabled", True)):
+        return None, 0.0
+
+    try:
+        ending_duration = float(getattr(cinema_music, "ending_duration_sec", 4.5))
+    except (TypeError, ValueError):
+        ending_duration = 4.5
+    ending_duration = max(0.0, min(5.0, ending_duration))
+    if ending_duration <= 0.05:
+        return None, 0.0
+
+    try:
+        ending_volume = float(getattr(cinema_music, "ending_volume", 1.0))
+    except (TypeError, ValueError):
+        ending_volume = 1.0
+    ending_volume = max(0.0, min(1.0, ending_volume))
+    return ending_volume, ending_duration
 
 
 def _video_encode_args(config: AppConfig) -> list[str]:

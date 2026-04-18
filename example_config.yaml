@@ -92,7 +92,10 @@ music:
 cinema_music:
   enabled: true
   folder: "musiccinema"
-  volume: 0.10
+  volume: 0.08
+  ending_enabled: true
+  ending_duration_sec: 4.5
+  ending_volume: 1.0
 
 # Persistent caches for expensive analysis
 cache:

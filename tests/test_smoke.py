@@ -31,7 +31,10 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.whisper_model_cache_dir, "models/whisper")
         self.assertTrue(config.cinema_music.enabled)
         self.assertEqual(config.cinema_music.folder, "musiccinema")
-        self.assertEqual(config.cinema_music.volume, 0.10)
+        self.assertEqual(config.cinema_music.volume, 0.08)
+        self.assertTrue(config.cinema_music.ending_enabled)
+        self.assertEqual(config.cinema_music.ending_duration_sec, 4.5)
+        self.assertEqual(config.cinema_music.ending_volume, 1.0)
         self.assertEqual(config.layout_mode, "auto")
         self.assertEqual(config.webcam_edge_margin_ratio, 0.15)
         self.assertIsNone(config.manual_webcam_crop)
@@ -1042,6 +1045,29 @@ class TestAudioMix(unittest.TestCase):
 
         self.assertIn("volume=0.100", filter_str)
 
+    def test_final_audio_mix_can_boost_music_ending(self):
+        from app.audio_mix import build_final_audio_mix
+        from app.config import AppConfig
+
+        config = AppConfig()
+        with tempfile.TemporaryDirectory() as td:
+            track = Path(td) / "track.mp3"
+            track.write_bytes(b"fake")
+            filter_str = build_final_audio_mix(
+                clip_duration=30.0,
+                music_path=str(track),
+                config=config,
+                music_input_idx=1,
+                has_original_audio=True,
+                final_duration_sec=30.0,
+                music_volume=0.08,
+                music_ending_volume=1.0,
+                music_ending_duration_sec=4.5,
+            )
+
+        self.assertIn("if(gte(t\\,25.500)\\,1.000\\,0.080)", filter_str)
+        self.assertIn(":eval=frame", filter_str)
+
 
 class TestCleanup(unittest.TestCase):
     def test_delete_input_after_success_removes_video_only_after_outputs_exist(self):
@@ -1112,9 +1138,11 @@ class TestRenderer(unittest.TestCase):
                 content_out=(0, 0, 1080, 1920),
                 output_size=(1080, 1920),
             )
-            music_path, music_volume = _select_cinema_music(slot_layout, config)
+            music_path, music_volume, ending_volume, ending_duration = _select_cinema_music(slot_layout, config)
             self.assertIsNone(music_path)
             self.assertIsNone(music_volume)
+            self.assertIsNone(ending_volume)
+            self.assertEqual(ending_duration, 0.0)
 
             cinema_layout = LayoutSpec(
                 has_webcam=False,
@@ -1124,10 +1152,12 @@ class TestRenderer(unittest.TestCase):
                 output_size=(1080, 1920),
             )
             config.cinema_music.volume = 0.50
-            music_path, music_volume = _select_cinema_music(cinema_layout, config)
+            music_path, music_volume, ending_volume, ending_duration = _select_cinema_music(cinema_layout, config)
 
         self.assertEqual(Path(music_path).name, "cinema.mp3")
         self.assertEqual(music_volume, 0.10)
+        self.assertEqual(ending_volume, 1.0)
+        self.assertEqual(ending_duration, 4.5)
 
     def test_cta_freeze_duration_prefers_voice_duration(self):
         from app.renderer import _cta_freeze_duration

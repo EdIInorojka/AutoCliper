@@ -255,7 +255,9 @@ def cli_entry():
         console.print(
             "Cinema music: "
             f"{config.cinema_music.enabled} "
-            f"(folder={config.cinema_music.folder}, volume_max={min(config.cinema_music.volume, 0.10):.2f})"
+            f"(folder={config.cinema_music.folder}, "
+            f"base_volume={min(config.cinema_music.volume, 0.10):.2f}, "
+            f"ending={config.cinema_music.ending_duration_sec:.1f}s)"
         )
         from app.cta_pause import (
             cta_disabled_reason,

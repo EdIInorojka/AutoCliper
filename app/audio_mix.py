@@ -94,6 +94,8 @@ def build_final_audio_mix(
     cta_insert_start_sec: Optional[float] = None,
     cta_insert_duration_sec: float = 0.0,
     music_volume: Optional[float] = None,
+    music_ending_volume: Optional[float] = None,
+    music_ending_duration_sec: float = 0.0,
 ) -> str:
     """
     Build the final audio mix filter.
@@ -149,11 +151,17 @@ def build_final_audio_mix(
         volume = max(0.0, min(1.0, volume))
         if music_volume is None and config.music.duck_under_speech:
             volume *= 0.5
+        volume_filter = _music_volume_filter(
+            base_volume=volume,
+            final_duration_sec=final_duration,
+            ending_volume=music_ending_volume,
+            ending_duration_sec=music_ending_duration_sec,
+        )
         parts.append(
             f"[{music_input_idx}:a]aloop=loop=-1:size=2e+09,"
             f"atrim=0:{final_duration:.3f},"
             "asetpts=N/SR/TB,"
-            f"volume={volume:.3f},"
+            f"{volume_filter},"
             "aformat=sample_rates=44100:channel_layouts=stereo[music]"
         )
         mix_inputs += "[music]"
@@ -182,3 +190,27 @@ def build_final_audio_mix(
         f"{mix_inputs}amix=inputs={input_count}:duration=first:dropout_transition=2[audio_out]"
     )
     return ";".join(parts)
+
+
+def _music_volume_filter(
+    base_volume: float,
+    final_duration_sec: float,
+    ending_volume: Optional[float] = None,
+    ending_duration_sec: float = 0.0,
+) -> str:
+    base = max(0.0, min(1.0, float(base_volume)))
+    if ending_volume is None:
+        return f"volume={base:.3f}"
+
+    ending_duration = max(0.0, float(ending_duration_sec))
+    final_duration = max(0.1, float(final_duration_sec))
+    if ending_duration <= 0.05 or final_duration <= ending_duration + 0.1:
+        return f"volume={base:.3f}"
+
+    ending = max(0.0, min(1.0, float(ending_volume)))
+    ending_start = max(0.0, final_duration - ending_duration)
+    return (
+        "volume="
+        f"'if(gte(t\\,{ending_start:.3f})\\,{ending:.3f}\\,{base:.3f})'"
+        ":eval=frame"
+    )
