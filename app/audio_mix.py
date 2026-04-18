@@ -17,6 +17,8 @@ console = get_console()
 def find_music_files(music_folder: str) -> list[str]:
     """Find all MP3/WAV files in music folder."""
     p = Path(music_folder)
+    if not p.exists() and not p.is_absolute():
+        p = Path(__file__).resolve().parent.parent / music_folder
     if not p.exists():
         return []
     files = []
@@ -29,7 +31,7 @@ def pick_random_track(music_folder: str, config: AppConfig) -> Optional[str]:
     """Pick a random music track."""
     files = find_music_files(music_folder)
     if not files:
-        console.print("[yellow]No music files found in music folder[/yellow]")
+        console.print(f"[yellow]No music files found in music folder: {music_folder}[/yellow]")
         return None
     if config.variation.enabled and config.variation.bgm_random_pick:
         return random.choice(files)
@@ -91,6 +93,7 @@ def build_final_audio_mix(
     final_duration_sec: Optional[float] = None,
     cta_insert_start_sec: Optional[float] = None,
     cta_insert_duration_sec: float = 0.0,
+    music_volume: Optional[float] = None,
 ) -> str:
     """
     Build the final audio mix filter.
@@ -139,8 +142,12 @@ def build_final_audio_mix(
     input_count = 1
 
     if has_music:
-        volume = (config.music.volume_min + config.music.volume_max) / 2
-        if config.music.duck_under_speech:
+        if music_volume is None:
+            volume = (config.music.volume_min + config.music.volume_max) / 2
+        else:
+            volume = float(music_volume)
+        volume = max(0.0, min(1.0, volume))
+        if music_volume is None and config.music.duck_under_speech:
             volume *= 0.5
         parts.append(
             f"[{music_input_idx}:a]aloop=loop=-1:size=2e+09,"

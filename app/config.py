@@ -70,6 +70,13 @@ class MusicConfig:
 
 
 @dataclass
+class CinemaMusicConfig:
+    enabled: bool = True
+    folder: str = "musiccinema"
+    volume: float = 0.10
+
+
+@dataclass
 class VariationConfig:
     enabled: bool = True
     intro_trim_randomization: float = 1.5
@@ -162,6 +169,7 @@ class AppConfig:
     hard_max_clip_duration_sec: int = 75
     cta: CTAConfig = field(default_factory=CTAConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
+    cinema_music: CinemaMusicConfig = field(default_factory=CinemaMusicConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     cleanup_temp_files: bool = True
     delete_input_after_success: bool = False
@@ -193,6 +201,9 @@ def app_config_from_dict(data: Optional[dict]) -> AppConfig:
     nested = {
         "cta": _merge_dataclass(CTAConfig, data.pop("cta", None)),
         "music": _merge_dataclass(MusicConfig, data.pop("music", None)),
+        "cinema_music": _merge_dataclass(
+            CinemaMusicConfig, data.pop("cinema_music", None)
+        ),
         "cache": _merge_dataclass(CacheConfig, data.pop("cache", None)),
         "export": _merge_dataclass(ExportConfig, data.pop("export", None)),
         "variation": _merge_dataclass(VariationConfig, data.pop("variation", None)),

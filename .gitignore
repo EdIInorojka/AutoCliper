@@ -36,8 +36,10 @@ StreamCuter.exe
 !subtitles/*.ass
 sounds/music/*
 sounds/voice/*
+musiccinema/*
 !sounds/music/.gitkeep
 !sounds/voice/.gitkeep
+!musiccinema/.gitkeep
 
 # OS
 .DS_Store

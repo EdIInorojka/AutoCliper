@@ -19,7 +19,7 @@ Use it only with content that you have the right to process. StreamCuter does no
 - CTA freeze/gray/typewriter pause at 7-10 seconds with RU/EN text selection.
 - CRF-based H.264 export by default for smaller files at near-identical visual quality.
 - Optional CTA voice MP3 from `sounds/voice/cta.mp3`.
-- Optional background music from `sounds/music`, disabled by default and enabled with `--music` or config.
+- Apply Cinema background music from `musiccinema`, capped at 10% volume. Normal webcam/slot modes never use background music.
 - Safe temp cleanup that keeps final `output` files.
 - Windows CMD/PowerShell CLI and `run_local.bat`.
 - Telegram-bot-ready config presets in `AppConfig.bot_preset_fields`.
@@ -97,8 +97,8 @@ Useful feature toggles:
 
 ```cmd
 python -m app.main --input "video.mp4" --no-webcam
-python -m app.main --input "video.mp4" --music
-python -m app.main --input "video.mp4" --no-music
+python -m app.main --input "video.mp4" --layout-mode cinema
+python -m app.main --input "video.mp4" --layout-mode cinema --no-music
 python -m app.main --input "video.mp4" --no-cta
 python -m app.main --input "video.mp4" --no-subs
 python -m app.main --input "video.mp4" --subtitle-lang ru --cta-lang ru --cta-voice "sounds\voice\cta.mp3"
@@ -146,7 +146,8 @@ Important fields:
 - `cta.enabled`, `cta.trigger_range_sec`, `cta.freeze_duration_sec`, `cta.text_mode`, `cta.custom_text`, `cta.text_file_path_en`, `cta.text_file_path_ru`, `cta.text_en`, `cta.text_ru`, `cta.language`, `cta.font_path`, `cta.font_size`, `cta.min_font_size`, `cta.max_text_width_ratio`, `cta.max_text_lines`, `cta.voice_mp3_path`.
 - When `cta.voice_mp3_path` points to an existing audio file, the CTA freeze duration follows that file's duration; if the file is missing, `cta.freeze_duration_sec` is used.
 - Default CTA file variants are limited to: `THE GAME IN BIO`, `LINK IN BIO`, `BIO FOR MORE`, `CHECK BIO`, `MORE IN BIO`, `ИГРА В ОПИСАНИИ`, `ССЫЛКА В ОПИСАНИИ`.
-- `music.enabled`, `music.folder`, `music.volume_min`, `music.volume_max`, `music.duck_under_speech`; default `music.enabled` is `false`.
+- `music.enabled`, `music.folder`, `music.volume_min`, `music.volume_max`, `music.duck_under_speech`; legacy normal-mode music remains disabled and is not used by the renderer.
+- `cinema_music.enabled`, `cinema_music.folder`, `cinema_music.volume`: Apply Cinema background music only; default folder is `musiccinema`, volume is capped at `0.10`.
 - `cache.enabled`, `cache.dir`, `cache.asr`, `cache.highlights`, `cache.layout`: persistent cache for repeated runs.
 - `variation.enabled`, `variation.cta_text_variants`, `variation.cta_text_variants_ru`, `variation.subtitle_style_variants`, `variation.bgm_random_pick`.
 - `cleanup_temp_files`, `delete_input_after_success`, `render_resume_enabled`.
@@ -205,6 +206,8 @@ StreamCuter/
       cta.mp3          optional
     music/
       *.mp3            optional
+  musiccinema/
+    *.mp3              optional, Apply Cinema only
   output/
   temp/
   tests/
@@ -242,7 +245,7 @@ Do not run the video renderer inside Vercel/serverless. ffmpeg rendering and ASR
 - `yt-dlp is not installed`: install `requirements.txt`, not `requirements-local.txt`.
 - `kick.com` returns HTTP 403 during ingest: the site may block anonymous requests. This project now enables `yt-dlp` impersonation support by default; if Kick still blocks a video, export cookies to a Netscape cookie file and point `STREAMCUTER_COOKIES_FILE` at it.
 - First ASR run is slow: faster-whisper downloads the model once.
-- Background music is disabled by default. Use `--music` or set `music.enabled: true` to opt in.
+- Apply Cinema can add quiet background music from `musiccinema` at max 10% volume. If the folder is empty, it renders without music. Other layout modes never use background music.
 - Word-by-word subtitles use `subtitles/ru.ass` or `subtitles/en.ass` as the ASS style template depending on the selected language.
 - Subtitle cleanup is language-aware: English subtitles keep English words only, Russian subtitles keep Cyrillic words only, and obvious ASR punctuation/CJK/mojibake noise is dropped without extra slow spellchecking.
 - CTA pause text uses `cta_texts/ru.txt` or `cta_texts/en.txt` by default. Use `--cta-text "..."` for a custom one-off phrase, or edit those files for the standard phrase pool. Long CTA text is wrapped and font-fitted so it stays inside the 9:16 frame.

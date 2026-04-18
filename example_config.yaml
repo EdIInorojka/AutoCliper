@@ -33,6 +33,7 @@ webcam_edge_margin_ratio: 0.15
 # Optional manual fallback crops: [x, y, width, height] in source-video pixels.
 manual_webcam_crop:
 manual_slot_crop:
+manual_cinema_crop:
 layout_preview_enabled: false
 layout_preview_time_sec:
 layout_preview_autofill: true
@@ -78,13 +79,20 @@ cta:
   typewriter_speed: 0.16
   voice_mp3_path: "sounds/voice/cta.mp3"
 
-# Background Music
+# Legacy background music config. The renderer currently uses music only in Apply Cinema.
 music:
   enabled: false
   folder: "sounds/music"
   volume_min: 0.10
   volume_max: 0.20
   duck_under_speech: true
+
+# Apply Cinema only. Put MP3/WAV/OGG/FLAC tracks into musiccinema/.
+# Normal webcam/slot modes never use background music.
+cinema_music:
+  enabled: true
+  folder: "musiccinema"
+  volume: 0.10
 
 # Persistent caches for expensive analysis
 cache:

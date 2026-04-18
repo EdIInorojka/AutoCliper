@@ -21,6 +21,7 @@
   "webcam_edge_margin_ratio": 0.15,
   "manual_webcam_crop": null,
   "manual_slot_crop": null,
+  "manual_cinema_crop": null,
   "layout_preview_enabled": false,
   "layout_preview_time_sec": null,
   "layout_preview_autofill": true,
@@ -68,6 +69,11 @@
     "volume_min": 0.1,
     "volume_max": 0.2,
     "duck_under_speech": true
+  },
+  "cinema_music": {
+    "enabled": true,
+    "folder": "musiccinema",
+    "volume": 0.1
   },
   "cache": {
     "enabled": true,

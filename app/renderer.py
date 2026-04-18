@@ -124,12 +124,9 @@ def render_clip(
             generate_ass_file(events, ass_path, config, theme_override=theme)
             console.print(f"[dim]Subtitles: {len(events)} events (theme={theme})[/dim]")
 
-    # Pick music
-    music_path = None
-    if config.music.enabled:
-        music_path = pick_random_track(config.music.folder, config)
-        if music_path:
-            console.print(f"[dim]Music: {Path(music_path).name}[/dim]")
+    # Background music is intentionally cinema-only. Normal webcam/slot clips
+    # stay clean even when legacy music config is enabled.
+    music_path, music_volume = _select_cinema_music(layout, config)
 
     # Build filter complex
     filter_complex, output_label, audio_meta = _build_filter_chain(
@@ -140,6 +137,7 @@ def render_clip(
         config=config,
         ass_path=ass_path,
         music_path=music_path,
+        music_volume=music_volume,
         voice_path=voice_path,
         clip_index=clip_index,
         cta_text=cta_text,
@@ -230,8 +228,9 @@ def _build_filter_chain(
     config: AppConfig,
     ass_path: Optional[str],
     music_path: Optional[str],
-    voice_path: Optional[str],
-    clip_index: int,
+    music_volume: Optional[float] = None,
+    voice_path: Optional[str] = None,
+    clip_index: int = 0,
     cta_text: Optional[str] = None,
     cta_start_sec: Optional[float] = None,
     cta_freeze_duration_sec: Optional[float] = None,
@@ -313,6 +312,7 @@ def _build_filter_chain(
         final_duration_sec=clip_dur + cta_insert_duration,
         cta_insert_start_sec=cta_start,
         cta_insert_duration_sec=cta_insert_duration,
+        music_volume=music_volume,
     )
     if audio_filter:
         for part in audio_filter.split(";"):
@@ -323,6 +323,43 @@ def _build_filter_chain(
     # Combine all filter parts - ensure no empty parts
     full_filter = ";".join(p for p in filter_parts if p.strip())
     return full_filter, current_label, {"has_audio_out": True}
+
+
+def _select_cinema_music(layout: LayoutSpec, config: AppConfig) -> tuple[Optional[str], Optional[float]]:
+    """Pick a 10%-max background track only for Apply Cinema output."""
+    if not _is_cinema_render(layout, config):
+        return None, None
+
+    cinema_music = getattr(config, "cinema_music", None)
+    if cinema_music is None or not bool(getattr(cinema_music, "enabled", True)):
+        console.print("[dim]Cinema music: disabled[/dim]")
+        return None, None
+
+    folder = str(getattr(cinema_music, "folder", "musiccinema") or "musiccinema")
+    music_path = pick_random_track(folder, config)
+    if not music_path:
+        console.print("[dim]Cinema music: no tracks, rendering without music[/dim]")
+        return None, None
+
+    volume = _cinema_music_volume(config)
+    console.print(f"[dim]Cinema music: {Path(music_path).name} at {volume:.0%}[/dim]")
+    return music_path, volume
+
+
+def _is_cinema_render(layout: LayoutSpec, config: AppConfig) -> bool:
+    layout_mode = str(getattr(layout, "mode", "") or "").lower()
+    config_mode = str(getattr(config, "layout_mode", "auto") or "auto").lower()
+    return layout_mode == "cinema" or config_mode == "cinema"
+
+
+def _cinema_music_volume(config: AppConfig) -> float:
+    cinema_music = getattr(config, "cinema_music", None)
+    raw = getattr(cinema_music, "volume", 0.10) if cinema_music is not None else 0.10
+    try:
+        volume = float(raw)
+    except (TypeError, ValueError):
+        volume = 0.10
+    return max(0.0, min(0.10, volume))
 
 
 def _video_encode_args(config: AppConfig) -> list[str]:

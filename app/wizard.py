@@ -160,7 +160,6 @@ def _build_cli_args(options: WizardOptions) -> list[str]:
         str(options.clips),
         "--render-preset",
         options.render_preset,
-        "--no-music",
     ]
 
     if options.input_start_sec is not None:
@@ -182,7 +181,6 @@ def _build_cli_args(options: WizardOptions) -> list[str]:
     if options.delete_source:
         args.append("--delete-input-after-success")
     if options.music:
-        args.remove("--no-music")
         args.append("--music")
 
     return args
@@ -210,7 +208,7 @@ def _print_summary(options: WizardOptions, command: Iterable[str]) -> None:
     console.print(f"[white]Папка выгрузки:[/white]     [bold]{options.output_dir}[/bold]")
     console.print(f"[white]Количество клипов:[/white]  [bold]{options.clips}[/bold]")
     console.print(f"[white]Качество:[/white]           [bold]{options.render_preset}[/bold]")
-    console.print(f"[white]Музыка:[/white]             [bold]{'вкл' if options.music else 'выкл'}[/bold]")
+    console.print("[white]Музыка:[/white]             [bold]только Apply Cinema из musiccinema[/bold]")
     console.print(f"[white]Предпросмотр:[/white]       [bold]{'да' if options.preview_layout else 'нет'}[/bold]")
     if options.preview_time:
         console.print(f"[white]Кадр предпросмотра:[/white] [bold]{options.preview_time}[/bold]")
@@ -284,12 +282,12 @@ def collect_options() -> WizardOptions:
     if _bool_choice("8. Ограничить диапазон входного видео", False):
         input_start_sec, input_end_sec = _select_input_range(input_path)
 
-    preview_layout = _bool_choice("9. Открыть окно, где можно выбрать вебку и слот", True)
+    preview_layout = True
+    console.print("[cyan]9. Окно выбора вебки/слота будет открыто автоматически.[/cyan]")
     preview_time = ""
-    if preview_layout:
-        preview_time = _read(
-            "   Момент для кадра предпросмотра, Enter = середина видео, примеры 180 или 03:00"
-        ).strip()
+    preview_time = _read(
+        "   Момент для кадра предпросмотра, Enter = середина видео, примеры 180 или 03:00"
+    ).strip()
 
     delete_source = _bool_choice("10. Удалить исходное видео после успешной генерации", False)
 

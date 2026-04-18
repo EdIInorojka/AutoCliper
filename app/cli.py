@@ -88,8 +88,16 @@ def cli_entry():
     )
     parser.add_argument("--no-webcam", action="store_true", help="Force no webcam detection")
     music_group = parser.add_mutually_exclusive_group()
-    music_group.add_argument("--music", action="store_true", help="Enable background music for this run")
-    music_group.add_argument("--no-music", action="store_true", help="Disable background music for this run")
+    music_group.add_argument(
+        "--music",
+        action="store_true",
+        help="Enable Apply Cinema background music from musiccinema for this run",
+    )
+    music_group.add_argument(
+        "--no-music",
+        action="store_true",
+        help="Disable Apply Cinema background music for this run",
+    )
     parser.add_argument("--no-cta", action="store_true", help="Disable CTA pause effect")
     parser.add_argument("--no-subs", action="store_true", help="Disable subtitles")
     parser.add_argument(
@@ -196,8 +204,10 @@ def cli_entry():
         )
     if args.music:
         config.music.enabled = True
+        config.cinema_music.enabled = True
     elif args.no_music:
         config.music.enabled = False
+        config.cinema_music.enabled = False
     if args.no_cta:
         config.cta.enabled = False
     if args.no_subs:
@@ -242,6 +252,11 @@ def cli_entry():
         console.print(f"Layout debug preview: {config.layout_debug_preview}")
         console.print(f"Layout selection save path: {config.layout_preview_save_path}")
         console.print(f"Music: {config.music.enabled}")
+        console.print(
+            "Cinema music: "
+            f"{config.cinema_music.enabled} "
+            f"(folder={config.cinema_music.folder}, volume_max={min(config.cinema_music.volume, 0.10):.2f})"
+        )
         from app.cta_pause import (
             cta_disabled_reason,
             cta_effectively_enabled,
