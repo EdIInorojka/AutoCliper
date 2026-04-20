@@ -170,6 +170,13 @@ def _highlight_stage(step: int, total: int, message: str) -> None:
     console.print(f"[cyan][{step}/{total}] {message}[/cyan]")
 
 
+def _progress_text(current: int, total: int, width: int = 24) -> str:
+    total = max(1, int(total))
+    current = max(0, min(int(current), total))
+    filled = int(round((current / total) * width))
+    return f"[{'#' * filled}{'-' * (width - filled)}] {int(round((current / total) * 100))}%"
+
+
 def _highlight_feature_cache_extra(video_info: VideoInfo) -> dict[str, Any]:
     return {
         "version": 1,
@@ -199,6 +206,8 @@ def find_highlights(
     Returns top-N segments sorted by score.
     """
     from app.cache import load_json_cache, save_json_cache
+    hook = getattr(config, "hook", None)
+    stage_total = 7 if hook is not None and bool(getattr(hook, "enabled", True)) else 6
 
     cache_extra = _highlight_cache_extra(video_info, config, asr_segments)
     cached = load_json_cache(config, "highlights", video_path, cache_extra)
@@ -212,7 +221,7 @@ def find_highlights(
     audio_path = None
     rms = centroid = onset = sr = None
 
-    _highlight_stage(1, 6, "Loading cached audio features...")
+    _highlight_stage(1, stage_total, "Loading cached audio features...")
     feature_cached = load_json_cache(config, "highlight_features", video_path, feature_cache_extra)
     if feature_cached:
         try:
@@ -232,7 +241,7 @@ def find_highlights(
             rms = centroid = onset = sr = None
 
     if rms is None or centroid is None or onset is None or sr is None:
-        _highlight_stage(2, 6, "Extracting audio for highlight analysis...")
+        _highlight_stage(2, stage_total, "Extracting audio for highlight analysis...")
         try:
             audio_path = _extract_audio_wav(video_path, temp_dir)
         except Exception as e:
@@ -243,7 +252,7 @@ def find_highlights(
             console.print("[yellow]Audio extraction failed, using fallback highlights[/yellow]")
             return _finalize_fallback_segments(video_path, video_info, config, cache_extra)
 
-        _highlight_stage(3, 6, "Computing audio features...")
+        _highlight_stage(3, stage_total, "Computing audio features...")
         try:
             import numpy as np
             from scipy.ndimage import uniform_filter1d
@@ -295,7 +304,7 @@ def find_highlights(
     window_frames = max(3, int(5.0 / hop_duration))
     combined_smooth = uniform_filter1d(combined, size=window_frames)
 
-    _highlight_stage(4, 6, "Merging ASR density...")
+    _highlight_stage(4, stage_total, "Merging ASR density...")
     if asr_segments:
         asr_density = np.zeros_like(combined_smooth)
         for segment_info in asr_segments:
@@ -312,11 +321,12 @@ def find_highlights(
             asr_density = normalize(asr_density)
             combined_smooth = 0.7 * combined_smooth + 0.3 * asr_density
 
-    _highlight_stage(5, 6, "Finding peaks...")
+    _highlight_stage(5, stage_total, "Finding peaks...")
     threshold = np.mean(combined_smooth) + 0.5 * np.std(combined_smooth)
     peaks = _find_peaks(combined_smooth, threshold, min_distance_sec=8.0, hop_duration=hop_duration)
+    console.print(f"[dim]Peak candidates: {len(peaks)}[/dim]")
 
-    _highlight_stage(6, 6, "Scoring candidates...")
+    _highlight_stage(6, stage_total, "Scoring candidates...")
     candidates: list[HighlightCandidate] = []
     preferred_dur = min(
         config.preferred_clip_duration_sec,
@@ -426,6 +436,7 @@ def find_highlights(
         video_path,
         video_info,
         config,
+        stage_total=stage_total,
     )
     console.print(f"[green]Found {len(segments)} highlight segments[/green]")
     _save_highlight_cache(config, video_path, cache_extra, segments)
@@ -678,6 +689,14 @@ def _apply_duration_variation(
         min_duration,
         float(min(config.max_clip_duration_sec, config.hard_max_clip_duration_sec)),
     )
+    if _hook_mode(config) == "movie":
+        # Cinema clips should stay in the long-form vertical range; do not stair-step
+        # them down into the generic 20s floor.
+        min_duration = max(
+            min_duration,
+            float(min(config.preferred_clip_duration_sec, config.hard_max_clip_duration_sec)),
+        )
+
     current_durations = [max(0.0, float(segment.end_sec - segment.start_sec)) for segment in segments]
     if not current_durations:
         return segments
@@ -697,7 +716,9 @@ def _apply_duration_variation(
             varied.append(segment)
             continue
 
-        if index < max_same:
+        if _hook_mode(config) == "movie":
+            target_duration = min(current_duration, max_duration)
+        elif index < max_same:
             target_duration = min(current_duration, base_duration)
         else:
             cumulative_drop += step_pattern[(index - max_same) % len(step_pattern)]
@@ -757,33 +778,47 @@ def _apply_hook_optimization(
     video_path: str,
     video_info: VideoInfo,
     config: AppConfig,
+    stage_total: int | None = None,
 ) -> list[HighlightSegment]:
     hook = getattr(config, "hook", None)
     if hook is None or not bool(getattr(hook, "enabled", True)):
         return segments
 
     hook_mode = _hook_mode(config)
+    if stage_total is not None:
+        _highlight_stage(stage_total, stage_total, "Optimizing hooks...")
     visual_signal = _load_visual_hook_signal(video_path, video_info, config) if hook_mode == "movie" else None
+    if hook_mode == "movie" and visual_signal is not None:
+        console.print("[dim]Cinema visual cues: lazy sampling only around candidate intros[/dim]")
     optimized: list[HighlightSegment] = []
     changed = False
 
-    for segment in segments:
-        updated = _optimize_segment_hook(
-            segment,
-            combined_smooth,
-            rms_norm,
-            centroid_norm,
-            onset_norm,
-            hop_duration,
-            asr_segments,
-            visual_signal,
-            video_info,
-            config,
-            hook_mode,
-        )
-        if abs(updated.start_sec - segment.start_sec) >= 0.05:
-            changed = True
-        optimized.append(updated)
+    try:
+        total_segments = len(segments)
+        for index, segment in enumerate(segments, start=1):
+            if total_segments > 1 and (index == 1 or index == total_segments or index % 5 == 0):
+                console.print(
+                    f"[dim]Hook optimization {index}/{total_segments} "
+                    f"{_progress_text(index, total_segments)}[/dim]"
+                )
+            updated = _optimize_segment_hook(
+                segment,
+                combined_smooth,
+                rms_norm,
+                centroid_norm,
+                onset_norm,
+                hop_duration,
+                asr_segments,
+                visual_signal,
+                video_info,
+                config,
+                hook_mode,
+            )
+            if abs(updated.start_sec - segment.start_sec) >= 0.05:
+                changed = True
+            optimized.append(updated)
+    finally:
+        _close_visual_hook_signal(visual_signal)
 
     if changed:
         console.print(f"[cyan]Hook optimizer adjusted {sum(abs(a.start_sec - b.start_sec) >= 0.05 for a, b in zip(optimized, segments))} clip starts[/cyan]")
@@ -1045,20 +1080,44 @@ def _load_visual_hook_signal(
     video_info: VideoInfo,
     config: AppConfig,
 ) -> Optional[dict[str, Any]]:
-    from app.cache import load_json_cache, save_json_cache
+    try:
+        import cv2
+    except ImportError:
+        return None
 
-    cache_extra = {
-        "version": 1,
-        "duration": round(float(video_info.duration_sec or 0.0), 3),
-        "step_sec": 1.0,
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+    return {
+        "mode": "lazy_capture",
+        "cap": cap,
+        "cache": {},
+        "step_sec": 0.5,
+        "duration_sec": float(video_info.duration_sec or 0.0),
     }
-    cached = load_json_cache(config, "highlight_visual", video_path, cache_extra)
-    if cached and isinstance(cached.get("motion"), list):
-        return {
-            "motion": cached.get("motion") or [],
-            "luma": cached.get("luma") or [],
-            "step_sec": float(cached.get("step_sec") or 1.0),
-        }
+
+
+def _close_visual_hook_signal(signal: Optional[dict[str, Any]]) -> None:
+    if not signal:
+        return
+    cap = signal.get("cap")
+    if cap is None:
+        return
+    try:
+        cap.release()
+    except Exception:
+        pass
+
+
+def _read_visual_hook_frame(signal: dict[str, Any], sample_time: float):
+    cache = signal.setdefault("cache", {})
+    cache_key = round(float(sample_time), 2)
+    if cache_key in cache:
+        return cache[cache_key]
+
+    cap = signal.get("cap")
+    if cap is None:
+        return None
 
     try:
         import cv2
@@ -1066,38 +1125,16 @@ def _load_visual_hook_signal(
     except ImportError:
         return None
 
-    cap = cv2.VideoCapture(video_path)
-    if not cap.isOpened():
+    cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, sample_time) * 1000.0)
+    ok, frame = cap.read()
+    if not ok or frame is None:
+        cache[cache_key] = None
         return None
 
-    sample_times = _float_grid(0.0, max(0.0, float(video_info.duration_sec) - 1.0), 1.0)
-    motion: list[float] = []
-    luma: list[float] = []
-    prev_gray = None
-    try:
-        for sample_time in sample_times:
-            cap.set(cv2.CAP_PROP_POS_MSEC, sample_time * 1000.0)
-            ok, frame = cap.read()
-            if not ok or frame is None:
-                motion.append(motion[-1] if motion else 0.0)
-                luma.append(luma[-1] if luma else 0.0)
-                continue
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            small = cv2.resize(gray, (160, 90))
-            luma_value = float(np.mean(small) / 255.0)
-            if prev_gray is None:
-                motion_value = 0.0
-            else:
-                motion_value = float(np.mean(cv2.absdiff(small, prev_gray)) / 255.0)
-            motion.append(motion_value)
-            luma.append(luma_value)
-            prev_gray = small
-    finally:
-        cap.release()
-
-    payload = {"motion": motion, "luma": luma, "step_sec": 1.0}
-    save_json_cache(config, "highlight_visual", video_path, payload, cache_extra)
-    return payload
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    small = cv2.resize(gray, (160, 90)).astype(np.uint8, copy=False)
+    cache[cache_key] = small
+    return small
 
 
 def _visual_hook_score(
@@ -1107,6 +1144,36 @@ def _visual_hook_score(
 ) -> float:
     if not signal:
         return 0.0
+    if signal.get("mode") == "lazy_capture":
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            return 0.0
+
+        step_sec = float(signal.get("step_sec") or 0.5)
+        sample_times = _float_grid(start_sec, max(start_sec, end_sec - step_sec), step_sec)
+        if round(float(end_sec), 2) not in {round(v, 2) for v in sample_times}:
+            sample_times.append(round(float(end_sec), 2))
+
+        lumas: list[float] = []
+        motions: list[float] = []
+        prev_frame = None
+        for sample_time in sample_times:
+            frame = _read_visual_hook_frame(signal, float(sample_time))
+            if frame is None:
+                continue
+            lumas.append(float(frame.mean() / 255.0))
+            if prev_frame is not None:
+                motions.append(float(np.mean(cv2.absdiff(frame, prev_frame)) / 255.0))
+            prev_frame = frame
+
+        if not lumas:
+            return 0.0
+        motion_mean = sum(motions) / max(1, len(motions))
+        luma_delta = max(lumas) - min(lumas)
+        return min(1.0, motion_mean * 3.0 + luma_delta * 1.5)
+
     step_sec = float(signal.get("step_sec") or 1.0)
     motion = signal.get("motion") or []
     luma = signal.get("luma") or []

@@ -1715,6 +1715,23 @@ class TestHighlightDetector(unittest.TestCase):
 
         self.assertEqual(durations, [45, 45, 43, 40, 40])
 
+    def test_cinema_duration_variation_does_not_shrink_below_preferred_length(self):
+        from app.highlight_detector import HighlightSegment, _apply_duration_variation
+        from app.config import AppConfig
+        from app.probe import VideoInfo
+
+        info = VideoInfo("video.mp4", 2400, 30, 1920, 1080, [])
+        config = AppConfig(clips_override=8, layout_mode="cinema")
+        segments = [
+            HighlightSegment(i * 80, i * 80 + 45, 0.8, ["test"], "scored")
+            for i in range(8)
+        ]
+
+        varied = _apply_duration_variation(segments, info, config)
+        durations = [round(segment.end_sec - segment.start_sec) for segment in varied]
+
+        self.assertEqual(durations, [45] * 8)
+
     def test_highlight_report_writes_reasons(self):
         from app.highlight_detector import HighlightSegment, write_highlight_report
         from app.config import AppConfig
