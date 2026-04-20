@@ -291,7 +291,14 @@ def generate_ass_file(
         alignment = 8
         margin_v = 0
         pos_x = int(config.export.width / 2)
-        pos_y = int(config.export.height * 0.14)
+        pos_ratio = 0.14
+        if str(getattr(config, "layout_mode", "auto") or "auto").lower() == "cinema":
+            banner = getattr(config, "banner", None)
+            if banner is not None and getattr(banner, "enabled", False):
+                pos_ratio = float(getattr(banner, "cinema_subtitle_top_ratio", 0.09))
+            else:
+                pos_ratio = 0.10
+        pos_y = int(config.export.height * pos_ratio)
         position_override = f"{{\\an8\\pos({pos_x},{pos_y})}}"
     elif config.subtitles_position == "slot_bottom":
         # Keep bottom subtitles inside the main slot area, above the CTA gap.

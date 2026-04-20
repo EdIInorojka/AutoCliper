@@ -12,6 +12,7 @@ from typing import Optional
 from app.utils.console import get_console
 
 from app.config import AppConfig, SUBTITLE_THEMES
+from app.banner_ads import BannerAsset, pick_banner_asset
 from app.layout import LayoutSpec, build_composite_filter
 from app.probe import VideoInfo
 from app.highlight_detector import HighlightSegment
@@ -132,8 +133,21 @@ def render_clip(
         music_ending_volume,
         music_ending_duration_sec,
     ) = _select_cinema_music(layout, config)
+    banner_asset = _select_cinema_banner(layout, config)
 
     # Build filter complex
+    banner_input_idx = 1 if banner_asset is not None else None
+    music_idx = None
+    voice_idx = None
+    next_input_idx = 1
+    if banner_asset is not None:
+        next_input_idx += 1
+    if music_path and os.path.exists(music_path):
+        music_idx = next_input_idx
+        next_input_idx += 1
+    if voice_path and os.path.exists(voice_path):
+        voice_idx = next_input_idx
+
     filter_complex, output_label, audio_meta = _build_filter_chain(
         video_path=video_path,
         video_info=video_info,
@@ -146,6 +160,10 @@ def render_clip(
         music_ending_volume=music_ending_volume,
         music_ending_duration_sec=music_ending_duration_sec,
         voice_path=voice_path,
+        banner_asset=banner_asset,
+        banner_input_idx=banner_input_idx,
+        music_input_idx=music_idx,
+        voice_input_idx=voice_idx,
         clip_index=clip_index,
         cta_text=cta_text,
         cta_start_sec=cta_start,
@@ -160,6 +178,9 @@ def render_clip(
     cmd.extend(["-ss", str(segment.start_sec)])
     cmd.extend(["-t", str(clip_dur)])
     cmd.extend(["-i", video_path])
+
+    if banner_asset and os.path.exists(banner_asset.path):
+        cmd.extend(["-stream_loop", "-1", "-i", banner_asset.path])
 
     if music_path and os.path.exists(music_path):
         cmd.extend(["-i", music_path])
@@ -239,6 +260,10 @@ def _build_filter_chain(
     music_ending_volume: Optional[float] = None,
     music_ending_duration_sec: float = 0.0,
     voice_path: Optional[str] = None,
+    banner_asset: Optional[BannerAsset] = None,
+    banner_input_idx: Optional[int] = None,
+    music_input_idx: Optional[int] = None,
+    voice_input_idx: Optional[int] = None,
     clip_index: int = 0,
     cta_text: Optional[str] = None,
     cta_start_sec: Optional[float] = None,
@@ -303,18 +328,47 @@ def _build_filter_chain(
         console.print(f"[dim]Subtitles overlay: {abs_path}[/dim]")
 
     # 4) Audio mix
-    music_idx = 1 if (music_path and os.path.exists(music_path)) else None
-    voice_idx = None
-    if voice_path and os.path.exists(voice_path):
-        voice_idx = 2 if music_idx is not None else 1
+    if banner_asset is not None and layout.banner_out is not None and banner_input_idx is not None:
+        bx, by, bw, bh = layout.banner_out
+        crop_x, crop_y, crop_w, crop_h = banner_asset.crop
+        banner_cfg = getattr(config, "banner", None)
+        chroma_similarity = (
+            float(getattr(banner_cfg, "chroma_similarity", 0.18)) if banner_cfg is not None else 0.18
+        )
+        chroma_blend = (
+            float(getattr(banner_cfg, "chroma_blend", 0.08)) if banner_cfg is not None else 0.08
+        )
+        banner_start_raw = (
+            getattr(banner_cfg, "manual_start_sec", None)
+            if banner_cfg is not None
+            else None
+        )
+        if banner_start_raw is None:
+            banner_start_raw = getattr(banner_asset, "start_sec", 0.0)
+        banner_start_sec = float(banner_start_raw or 0.0)
+        banner_start_sec = max(0.0, banner_start_sec)
+        final_visual_duration = clip_dur + cta_insert_duration
+        parts_banner = [
+            f"[{banner_input_idx}:v]trim=start={banner_start_sec:.3f}:"
+            f"end={banner_start_sec + final_visual_duration:.3f},setpts=PTS-STARTPTS",
+            f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y}",
+            f"colorkey={banner_asset.key_hex}:{chroma_similarity:.3f}:{chroma_blend:.3f}",
+            "format=rgba",
+            f"scale={bw}:{bh}:force_original_aspect_ratio=decrease:force_divisible_by=2[banner_scaled]",
+        ]
+        filter_parts.append(",".join(parts_banner))
+        filter_parts.append(
+            f"[{current_label}][banner_scaled]overlay={bx}:{by}+{bh}-h:format=auto:shortest=1[banner_out]"
+        )
+        current_label = "banner_out"
 
     audio_filter = build_final_audio_mix(
         clip_duration=clip_dur,
-        music_path=music_path if music_idx is not None else None,
+        music_path=music_path if music_input_idx is not None else None,
         config=config,
         video_input_idx=0,
-        music_input_idx=music_idx,
-        voice_input_idx=voice_idx,
+        music_input_idx=music_input_idx,
+        voice_input_idx=voice_input_idx,
         voice_start_sec=float(cta_start or 0.0),
         voice_volume=1.0,
         has_original_audio=bool(video_info.audio_streams),
@@ -356,7 +410,7 @@ def _select_cinema_music(
         return None, None, None, 0.0
 
     volume = _cinema_music_volume(config)
-    ending_volume, ending_duration = _cinema_music_ending(config)
+    ending_volume, ending_duration = _cinema_music_ending(config, volume)
     if ending_volume is None:
         console.print(f"[dim]Cinema music: {Path(music_path).name} at {volume:.0%}[/dim]")
     else:
@@ -365,6 +419,19 @@ def _select_cinema_music(
             f"ending {ending_duration:.1f}s at {ending_volume:.0%}[/dim]"
         )
     return music_path, volume, ending_volume, ending_duration
+
+
+def _select_cinema_banner(layout: LayoutSpec, config: AppConfig) -> Optional[BannerAsset]:
+    """Pick one chroma-keyed banner asset for cinema renders."""
+    if not _is_cinema_render(layout, config):
+        return None
+    if getattr(layout, "banner_out", None) is None:
+        return None
+    banner_asset = pick_banner_asset(config)
+    if banner_asset is None:
+        return None
+    console.print(f"[dim]Cinema banner: {Path(banner_asset.path).name}[/dim]")
+    return banner_asset
 
 
 def _is_cinema_render(layout: LayoutSpec, config: AppConfig) -> bool:
@@ -383,7 +450,7 @@ def _cinema_music_volume(config: AppConfig) -> float:
     return max(0.0, min(0.10, volume))
 
 
-def _cinema_music_ending(config: AppConfig) -> tuple[Optional[float], float]:
+def _cinema_music_ending(config: AppConfig, base_volume: float) -> tuple[Optional[float], float]:
     cinema_music = getattr(config, "cinema_music", None)
     if cinema_music is None or not bool(getattr(cinema_music, "ending_enabled", True)):
         return None, 0.0
@@ -397,10 +464,15 @@ def _cinema_music_ending(config: AppConfig) -> tuple[Optional[float], float]:
         return None, 0.0
 
     try:
-        ending_volume = float(getattr(cinema_music, "ending_volume", 0.60))
+        ending_volume = float(getattr(cinema_music, "ending_volume", 0.09))
     except (TypeError, ValueError):
-        ending_volume = 0.60
-    ending_volume = max(0.0, min(1.0, ending_volume))
+        ending_volume = 0.09
+
+    base = max(0.0, min(0.10, float(base_volume)))
+    max_allowed = min(0.14, base + 0.04)
+    ending_volume = max(base, min(max_allowed, ending_volume))
+    if ending_volume <= base + 0.001:
+        return None, 0.0
     return ending_volume, ending_duration
 
 

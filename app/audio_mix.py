@@ -209,8 +209,13 @@ def _music_volume_filter(
 
     ending = max(0.0, min(1.0, float(ending_volume)))
     ending_start = max(0.0, final_duration - ending_duration)
+    if ending <= base + 0.001:
+        return f"volume={base:.3f}"
     return (
         "volume="
-        f"'if(gte(t\\,{ending_start:.3f})\\,{ending:.3f}\\,{base:.3f})'"
+        f"'if(lt(t\\,{ending_start:.3f})\\,{base:.3f}\\,"
+        f"if(lt(t\\,{final_duration:.3f})\\,"
+        f"{base:.3f}+(({ending:.3f}-{base:.3f})*(t-{ending_start:.3f})/{ending_duration:.3f})\\,"
+        f"{ending:.3f}))'"
         ":eval=frame"
     )

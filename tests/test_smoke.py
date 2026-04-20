@@ -34,7 +34,15 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.cinema_music.volume, 0.05)
         self.assertTrue(config.cinema_music.ending_enabled)
         self.assertEqual(config.cinema_music.ending_duration_sec, 4.5)
-        self.assertEqual(config.cinema_music.ending_volume, 0.60)
+        self.assertEqual(config.cinema_music.ending_volume, 0.09)
+        self.assertFalse(config.banner.enabled)
+        self.assertEqual(config.banner.folder, "Banners")
+        self.assertEqual(config.banner.width_ratio, 0.50)
+        self.assertEqual(config.banner.max_height_ratio, 0.14)
+        self.assertEqual(config.banner.cinema_raise_ratio, 0.04)
+        self.assertEqual(config.banner.cinema_subtitle_top_ratio, 0.09)
+        self.assertIsNone(config.banner.manual_box)
+        self.assertIsNone(config.banner.manual_start_sec)
         self.assertTrue(config.hook.enabled)
         self.assertTrue(config.hook.strict_factual)
         self.assertEqual(config.hook.intro_window_sec, 2.0)
@@ -91,6 +99,40 @@ class TestConfig(unittest.TestCase):
             config.bot_preset_fields.available_cta_texts_ru,
             ["ИГРА В ОПИСАНИИ", "ССЫЛКА В ОПИСАНИИ"],
         )
+
+    def test_config_loads_nested_banner_block(self):
+        from app.config import app_config_from_dict
+
+        config = app_config_from_dict(
+            {
+                "layout_mode": "cinema",
+                "banner": {
+                    "enabled": True,
+                    "folder": "Ads",
+                    "width_ratio": 0.42,
+                },
+            }
+        )
+
+        self.assertTrue(config.banner.enabled)
+        self.assertEqual(config.banner.folder, "Ads")
+        self.assertEqual(config.banner.width_ratio, 0.42)
+
+    def test_config_loads_nested_banner_manual_fields(self):
+        from app.config import app_config_from_dict
+
+        config = app_config_from_dict(
+            {
+                "banner": {
+                    "enabled": True,
+                    "manual_box": [0.05, 0.75, 0.50, 0.12],
+                    "manual_start_sec": 1.75,
+                }
+            }
+        )
+
+        self.assertEqual(config.banner.manual_box, [0.05, 0.75, 0.50, 0.12])
+        self.assertEqual(config.banner.manual_start_sec, 1.75)
 
     def test_load_example_config(self):
         from app.config import load_config, AppConfig
@@ -573,6 +615,22 @@ class TestWizard(unittest.TestCase):
 
 
 class TestLayoutSelector(unittest.TestCase):
+    def test_toolbar_button_labels_only_expose_slot_actions(self):
+        from app.layout_selector import _toolbar_button_labels
+
+        self.assertEqual(
+            _toolbar_button_labels("slot_only"),
+            ["Select slot", "Select webcam", "Clear webcam", "Apply"],
+        )
+
+    def test_toolbar_button_labels_only_expose_cinema_actions(self):
+        from app.layout_selector import _toolbar_button_labels
+
+        self.assertEqual(
+            _toolbar_button_labels("cinema"),
+            ["Select cinema", "Select webcam", "Clear webcam", "Apply"],
+        )
+
     def test_apply_selection_with_both_crops_uses_split_layout(self):
         from app.config import AppConfig
         from app.layout_selector import LayoutSelection, apply_layout_selection
@@ -720,6 +778,29 @@ class TestLayoutSelector(unittest.TestCase):
         self.assertEqual(config.manual_cinema_crop, [520, 140, 860, 620])
         self.assertEqual(config.webcam_detection, "auto")
         self.assertEqual(config.subtitles_position, "between_webcam_and_game")
+
+    def test_apply_selection_cinema_mode_persists_banner_box_and_phase(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig(layout_mode="cinema")
+        config.banner.enabled = True
+        selection = LayoutSelection(
+            webcam_crop=None,
+            slot_crop=None,
+            cinema_crop=(520, 140, 860, 620),
+            banner_box=(36, 1496, 660, 210),
+            banner_start_sec=1.75,
+            source_size=(1920, 1080),
+            preview_time_sec=120.0,
+            apply_mode="cinema",
+        )
+
+        mode = apply_layout_selection(config, selection)
+
+        self.assertEqual(mode, "cinema_no_webcam")
+        self.assertEqual(config.banner.manual_box, [0.033333, 0.779167, 0.611111, 0.109375])
+        self.assertEqual(config.banner.manual_start_sec, 1.75)
 
     def test_save_selection_appends_dataset(self):
         from app.config import AppConfig
@@ -1105,11 +1186,11 @@ class TestAudioMix(unittest.TestCase):
                 has_original_audio=True,
                 final_duration_sec=30.0,
                 music_volume=0.05,
-                music_ending_volume=0.60,
+                music_ending_volume=0.09,
                 music_ending_duration_sec=4.5,
             )
 
-        self.assertIn("if(gte(t\\,25.500)\\,0.600\\,0.050)", filter_str)
+        self.assertIn("if(lt(t\\,25.500)\\,0.050\\,if(lt(t\\,30.000)\\,0.050+((0.090-0.050)*(t-25.500)/4.500)\\,0.090))", filter_str)
         self.assertIn(":eval=frame", filter_str)
 
 
@@ -1205,7 +1286,19 @@ class TestRenderer(unittest.TestCase):
 
         self.assertEqual(Path(music_path).name, "cinema.mp3")
         self.assertEqual(music_volume, 0.10)
-        self.assertEqual(ending_volume, 0.60)
+        self.assertIsNone(ending_volume)
+        self.assertEqual(ending_duration, 0.0)
+
+    def test_cinema_music_ending_is_capped_to_small_lift_over_base(self):
+        from app.config import AppConfig
+        from app.renderer import _cinema_music_ending
+
+        config = AppConfig()
+        config.cinema_music.ending_volume = 0.60
+
+        ending_volume, ending_duration = _cinema_music_ending(config, 0.05)
+
+        self.assertEqual(ending_volume, 0.09)
         self.assertEqual(ending_duration, 4.5)
 
     def test_cta_freeze_duration_prefers_voice_duration(self):
@@ -2277,6 +2370,311 @@ class TestLayout(unittest.TestCase):
         self.assertEqual(layout.webcam_out[1], 0)
         self.assertGreater(layout.content_out[1], 0)
         self.assertEqual(layout.content_out[1], layout.webcam_out[3])
+
+
+class TestCinemaBanner(unittest.TestCase):
+    def test_wizard_build_cli_args_supports_banner(self):
+        from app.wizard import WizardOptions, _build_cli_args
+
+        args = _build_cli_args(
+            WizardOptions(
+                input_path="video.mp4",
+                language="en",
+                output_dir="out",
+                clips=5,
+                render_preset="quality",
+                banner=True,
+            )
+        )
+
+        self.assertIn("--banner", args)
+
+    def test_cli_parses_banner_flag(self):
+        from app.cli import cli_entry
+        from app.config import AppConfig
+
+        captured = {}
+
+        def _run(config):
+            captured["config"] = config
+
+        with patch.object(
+            sys,
+            "argv",
+            ["streamcuter", "--input", "video.mp4", "--layout-mode", "cinema", "--banner"],
+        ), patch("app.config.load_config", return_value=AppConfig()), patch(
+            "app.main.run_pipeline",
+            side_effect=_run,
+        ):
+            cli_entry()
+
+        self.assertTrue(captured["config"].banner.enabled)
+
+    def test_detect_banner_bounds_from_frame_finds_non_pink_banner(self):
+        import numpy as np
+
+        from app.banner_ads import _detect_banner_bounds_from_frame
+
+        frame = np.full((400, 300, 3), (255, 0, 255), dtype=np.uint8)
+        frame[250:320, 40:260] = (20, 40, 220)
+
+        crop = _detect_banner_bounds_from_frame(frame, (255, 0, 255))
+
+        self.assertIsNotNone(crop)
+        x, y, w, h = crop
+        self.assertLessEqual(x, 40)
+        self.assertLessEqual(y, 250)
+        self.assertGreaterEqual(x + w, 260)
+        self.assertGreaterEqual(y + h, 320)
+
+    def test_layout_cinema_banner_moves_movie_up_and_reserves_lower_left_box(self):
+        from app.config import AppConfig
+        from app.layout import compute_layout
+        from app.webcam_types import WebcamDetectionResult
+
+        plain = AppConfig(layout_mode="cinema")
+        with_banner = AppConfig(layout_mode="cinema")
+        with_banner.banner.enabled = True
+
+        webcam_result = WebcamDetectionResult(has_webcam=False)
+        plain_layout = compute_layout(1920, 1080, 1080, 1920, webcam_result, plain)
+        banner_layout = compute_layout(1920, 1080, 1080, 1920, webcam_result, with_banner)
+
+        self.assertIsNone(plain_layout.banner_out)
+        self.assertIsNotNone(banner_layout.banner_out)
+        self.assertLess(banner_layout.content_out[1], plain_layout.content_out[1])
+        self.assertEqual(banner_layout.banner_out[0], with_banner.banner.margin_left)
+
+    def test_restore_saved_banner_state_uses_last_layout_selection(self):
+        import json
+
+        from app.config import AppConfig
+        from app.layout_selector import _restore_saved_banner_state
+
+        with tempfile.TemporaryDirectory() as td:
+            config = AppConfig(output_dir=td, layout_mode="cinema")
+            config.banner.enabled = True
+            save_path = Path(td) / "layout_selection.json"
+            save_path.write_text(
+                json.dumps(
+                    {
+                        "effective_manual_banner_box": [0.05, 0.78, 0.52, 0.11],
+                        "effective_manual_banner_start_sec": 3.5,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            _restore_saved_banner_state(config)
+
+        self.assertEqual(config.banner.manual_box, [0.05, 0.78, 0.52, 0.11])
+        self.assertEqual(config.banner.manual_start_sec, 3.5)
+
+    def test_layout_selector_banner_guide_rect_uses_lower_left_safe_zone(self):
+        from app.config import AppConfig
+        from app.layout_selector import _banner_preview_guide_rect
+
+        config = AppConfig(layout_mode="cinema")
+        config.banner.enabled = True
+
+        rect = _banner_preview_guide_rect(960, 540, config)
+
+        self.assertIsNotNone(rect)
+        x1, y1, x2, y2 = rect
+        self.assertLess(x1, 80)
+        self.assertGreater(y1, 350)
+        self.assertGreater(x2 - x1, 120)
+        self.assertGreater(y2 - y1, 30)
+
+    def test_apply_layout_selection_persists_manual_banner_box_for_cinema(self):
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, apply_layout_selection
+
+        config = AppConfig(layout_mode="cinema")
+        config.banner.enabled = True
+        selection = LayoutSelection(
+            webcam_crop=None,
+            slot_crop=None,
+            cinema_crop=(120, 80, 1400, 900),
+            banner_box=(40, 1500, 620, 180),
+            source_size=(1920, 1080),
+            preview_time_sec=30.0,
+            apply_mode="cinema",
+        )
+
+        mode = apply_layout_selection(config, selection)
+
+        self.assertEqual(mode, "cinema_no_webcam")
+        self.assertEqual(config.banner.manual_box, [0.037037, 0.78125, 0.574074, 0.09375])
+
+    def test_save_layout_selection_writes_banner_phase(self):
+        import json
+
+        from app.config import AppConfig
+        from app.layout_selector import LayoutSelection, save_layout_selection
+
+        with tempfile.TemporaryDirectory() as td:
+            config = AppConfig(output_dir=td, layout_mode="cinema")
+            config.banner.enabled = True
+            config.layout_preview_save_path = "layout_selection.json"
+            selection = LayoutSelection(
+                webcam_crop=None,
+                slot_crop=None,
+                cinema_crop=(120, 80, 1400, 900),
+                banner_box=(40, 1500, 620, 180),
+                banner_start_sec=2.25,
+                source_size=(1920, 1080),
+                preview_time_sec=30.0,
+                apply_mode="cinema",
+            )
+
+            out_path = save_layout_selection(config, selection, "cinema_no_webcam", video_path="video.mp4")
+            payload = json.loads(Path(out_path).read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["manual_banner_start_sec"], 2.25)
+
+    def test_layout_cinema_uses_manual_banner_box_when_present(self):
+        from app.config import AppConfig
+        from app.layout import compute_layout
+        from app.webcam_types import WebcamDetectionResult
+
+        config = AppConfig(layout_mode="cinema")
+        config.banner.enabled = True
+        config.banner.manual_box = [0.05, 0.80, 0.55, 0.10]
+
+        layout = compute_layout(1920, 1080, 1080, 1920, WebcamDetectionResult(has_webcam=False), config)
+
+        self.assertEqual(layout.banner_out, (54, 1536, 594, 192))
+
+    def test_cinema_banner_moves_top_subtitles_higher(self):
+        from app.config import AppConfig
+        from app.subtitles import SubtitleEvent, WordTiming, generate_ass_file
+
+        config = AppConfig(layout_mode="cinema")
+        config.banner.enabled = True
+        config.subtitles_position = "slot_top"
+        config.language = "en"
+
+        with tempfile.TemporaryDirectory() as td:
+            output_path = Path(td) / "subs.ass"
+            generate_ass_file(
+                [
+                    SubtitleEvent(
+                        start=0.0,
+                        end=1.0,
+                        text="Hello",
+                        words=[WordTiming(word="Hello", start=0.0, end=1.0)],
+                    )
+                ],
+                str(output_path),
+                config,
+            )
+            text = output_path.read_text(encoding="utf-8")
+
+        self.assertIn(r"{\an8\pos(540,172)}Hello", text)
+
+    def test_build_filter_chain_adds_banner_overlay(self):
+        from app.banner_ads import BannerAsset
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment
+        from app.layout import LayoutSpec
+        from app.probe import VideoInfo
+        from app.renderer import _build_filter_chain
+
+        config = AppConfig(layout_mode="cinema")
+        config.banner.enabled = True
+        config.cta.enabled = False
+        segment = HighlightSegment(10.0, 40.0, 0.9)
+        layout = LayoutSpec(
+            has_webcam=False,
+            mode="cinema",
+            content_src=(0, 0, 1920, 1080),
+            content_out=(0, 320, 1080, 1320),
+            banner_out=(32, 1596, 410, 268),
+            output_size=(1080, 1920),
+        )
+        video_info = VideoInfo(
+            path="video.mp4",
+            duration_sec=60.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            audio_streams=[{"index": 1}],
+        )
+        banner_asset = BannerAsset(
+            path="Banners\\TIKTOK1.mp4",
+            crop=(90, 1180, 900, 260),
+            key_hex="0xFF00FF",
+        )
+
+        with patch("app.renderer.build_final_audio_mix", return_value=""):
+            filter_complex, output_label, audio_meta = _build_filter_chain(
+                video_path="video.mp4",
+                video_info=video_info,
+                segment=segment,
+                layout=layout,
+                config=config,
+                ass_path=None,
+                music_path=None,
+                banner_asset=banner_asset,
+                banner_input_idx=1,
+            )
+
+        self.assertIn("colorkey=0xFF00FF", filter_complex)
+        self.assertIn("overlay=32:1596+268-h", filter_complex)
+        self.assertEqual(output_label, "banner_out")
+        self.assertTrue(audio_meta["has_audio_out"])
+
+    def test_build_filter_chain_uses_manual_banner_start_sec(self):
+        from app.banner_ads import BannerAsset
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment
+        from app.layout import LayoutSpec
+        from app.probe import VideoInfo
+        from app.renderer import _build_filter_chain
+
+        config = AppConfig(layout_mode="cinema")
+        config.banner.enabled = True
+        config.banner.manual_start_sec = 2.5
+        config.cta.enabled = False
+        segment = HighlightSegment(10.0, 40.0, 0.9)
+        layout = LayoutSpec(
+            has_webcam=False,
+            mode="cinema",
+            content_src=(0, 0, 1920, 1080),
+            content_out=(0, 320, 1080, 1320),
+            banner_out=(32, 1596, 410, 268),
+            output_size=(1080, 1920),
+        )
+        video_info = VideoInfo(
+            path="video.mp4",
+            duration_sec=60.0,
+            fps=30.0,
+            width=1920,
+            height=1080,
+            audio_streams=[{"index": 1}],
+        )
+        banner_asset = BannerAsset(
+            path="Banners\\TIKTOK1.mp4",
+            crop=(90, 1180, 900, 260),
+            key_hex="0xFF00FF",
+            start_sec=1.0,
+        )
+
+        with patch("app.renderer.build_final_audio_mix", return_value=""):
+            filter_complex, _, _ = _build_filter_chain(
+                video_path="video.mp4",
+                video_info=video_info,
+                segment=segment,
+                layout=layout,
+                config=config,
+                ass_path=None,
+                music_path=None,
+                banner_asset=banner_asset,
+                banner_input_idx=1,
+            )
+
+        self.assertIn("trim=start=2.500:end=32.500", filter_complex)
 
 
 if __name__ == "__main__":

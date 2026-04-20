@@ -30,6 +30,7 @@ class WizardOptions:
     preview_time: str = ""
     delete_source: bool = False
     music: bool = False
+    banner: bool = False
 
 
 def _print_header(title: str) -> None:
@@ -182,6 +183,8 @@ def _build_cli_args(options: WizardOptions) -> list[str]:
         args.append("--delete-input-after-success")
     if options.music:
         args.append("--music")
+    if options.banner:
+        args.append("--banner")
 
     return args
 
@@ -209,6 +212,7 @@ def _print_summary(options: WizardOptions, command: Iterable[str]) -> None:
     console.print(f"[white]Количество клипов:[/white]  [bold]{options.clips}[/bold]")
     console.print(f"[white]Качество:[/white]           [bold]{options.render_preset}[/bold]")
     console.print("[white]Музыка:[/white]             [bold]только Apply Cinema из musiccinema[/bold]")
+    console.print(f"[white]Баннер:[/white]             [bold]{'да' if options.banner else 'нет'}[/bold]")
     console.print(f"[white]Предпросмотр:[/white]       [bold]{'да' if options.preview_layout else 'нет'}[/bold]")
     if options.preview_time:
         console.print(f"[white]Кадр предпросмотра:[/white] [bold]{options.preview_time}[/bold]")
@@ -277,19 +281,21 @@ def collect_options() -> WizardOptions:
         "5": "nvenc_fast",
     }[render_choice]
 
+    banner_enabled = _bool_choice("8. Добавить баннер (только для Apply Cinema)", False)
+
     input_start_sec = None
     input_end_sec = None
-    if _bool_choice("8. Ограничить диапазон входного видео", False):
+    if _bool_choice("9. Ограничить диапазон входного видео", False):
         input_start_sec, input_end_sec = _select_input_range(input_path)
 
     preview_layout = True
-    console.print("[cyan]9. Окно выбора вебки/слота будет открыто автоматически.[/cyan]")
+    console.print("[cyan]10. Окно выбора вебки/слота будет открыто автоматически.[/cyan]")
     preview_time = ""
     preview_time = _read(
         "   Момент для кадра предпросмотра, Enter = середина видео, примеры 180 или 03:00"
     ).strip()
 
-    delete_source = _bool_choice("10. Удалить исходное видео после успешной генерации", False)
+    delete_source = _bool_choice("11. Удалить исходное видео после успешной генерации", False)
 
     return WizardOptions(
         input_path=input_path,
@@ -306,6 +312,7 @@ def collect_options() -> WizardOptions:
         preview_time=preview_time,
         delete_source=delete_source,
         music=False,
+        banner=banner_enabled,
     )
 
 

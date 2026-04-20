@@ -98,6 +98,17 @@ def cli_entry():
         action="store_true",
         help="Disable Apply Cinema background music for this run",
     )
+    banner_group = parser.add_mutually_exclusive_group()
+    banner_group.add_argument(
+        "--banner",
+        action="store_true",
+        help="Enable cinema banner overlay from Banners for this run",
+    )
+    banner_group.add_argument(
+        "--no-banner",
+        action="store_true",
+        help="Disable cinema banner overlay for this run",
+    )
     parser.add_argument("--no-cta", action="store_true", help="Disable CTA pause effect")
     parser.add_argument("--no-subs", action="store_true", help="Disable subtitles")
     parser.add_argument(
@@ -208,6 +219,10 @@ def cli_entry():
     elif args.no_music:
         config.music.enabled = False
         config.cinema_music.enabled = False
+    if args.banner:
+        config.banner.enabled = True
+    elif args.no_banner:
+        config.banner.enabled = False
     if args.no_cta:
         config.cta.enabled = False
     if args.no_subs:
@@ -259,6 +274,12 @@ def cli_entry():
             f"base_volume={min(config.cinema_music.volume, 0.10):.2f}, "
             f"ending={config.cinema_music.ending_duration_sec:.1f}s "
             f"at {min(config.cinema_music.ending_volume, 1.0):.2f})"
+        )
+        console.print(
+            "Cinema banner: "
+            f"{config.banner.enabled} "
+            f"(folder={config.banner.folder}, width_ratio={config.banner.width_ratio:.2f}, "
+            f"chroma={config.banner.chroma_similarity:.2f}/{config.banner.chroma_blend:.2f})"
         )
         from app.cta_pause import (
             cta_disabled_reason,

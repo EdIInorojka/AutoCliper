@@ -76,7 +76,23 @@ class CinemaMusicConfig:
     volume: float = 0.05
     ending_enabled: bool = True
     ending_duration_sec: float = 4.5
-    ending_volume: float = 0.60
+    ending_volume: float = 0.09
+
+
+@dataclass
+class BannerConfig:
+    enabled: bool = False
+    folder: str = "Banners"
+    width_ratio: float = 0.50
+    max_height_ratio: float = 0.14
+    margin_left: int = 32
+    margin_bottom: int = 56
+    cinema_raise_ratio: float = 0.04
+    cinema_subtitle_top_ratio: float = 0.09
+    chroma_similarity: float = 0.18
+    chroma_blend: float = 0.08
+    manual_box: Optional[List[float]] = None  # [x_ratio, y_ratio, w_ratio, h_ratio]
+    manual_start_sec: Optional[float] = None
 
 
 @dataclass
@@ -183,6 +199,7 @@ class AppConfig:
     cta: CTAConfig = field(default_factory=CTAConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     cinema_music: CinemaMusicConfig = field(default_factory=CinemaMusicConfig)
+    banner: BannerConfig = field(default_factory=BannerConfig)
     hook: HookConfig = field(default_factory=HookConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     cleanup_temp_files: bool = True
@@ -218,6 +235,7 @@ def app_config_from_dict(data: Optional[dict]) -> AppConfig:
         "cinema_music": _merge_dataclass(
             CinemaMusicConfig, data.pop("cinema_music", None)
         ),
+        "banner": _merge_dataclass(BannerConfig, data.pop("banner", None)),
         "hook": _merge_dataclass(HookConfig, data.pop("hook", None)),
         "cache": _merge_dataclass(CacheConfig, data.pop("cache", None)),
         "export": _merge_dataclass(ExportConfig, data.pop("export", None)),

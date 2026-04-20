@@ -114,7 +114,8 @@ def run_pipeline(config: AppConfig) -> None:
                     f"mode={selection_mode}, layout_mode={config.layout_mode}, "
                     f"webcam={config.manual_webcam_crop or 'none'}, "
                     f"slot={config.manual_slot_crop or 'none'}, "
-                    f"cinema={config.manual_cinema_crop or 'none'}[/cyan]"
+                    f"cinema={config.manual_cinema_crop or 'none'}, "
+                    f"banner={getattr(getattr(config, 'banner', None), 'manual_box', None) or 'auto'}[/cyan]"
                 )
                 if cta_disabled_reason(config) == "cinema mode":
                     console.print("[dim]CTA disabled by cinema mode[/dim]")
@@ -160,6 +161,8 @@ def run_pipeline(config: AppConfig) -> None:
     ):
         config.subtitles_position = "slot_top"
         console.print("[dim]No webcam: moving subtitles to top-safe position[/dim]")
+    if layout.mode == "cinema" and getattr(layout, "banner_out", None) is not None:
+        console.print(f"[dim]Cinema banner zone: {layout.banner_out}[/dim]")
 
     # Step 6: Discovery ASR
     console.print("\n[step 6] Running speech analysis...")
