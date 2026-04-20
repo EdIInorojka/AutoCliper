@@ -73,10 +73,10 @@
   "cinema_music": {
     "enabled": true,
     "folder": "musiccinema",
-    "volume": 0.08,
+    "volume": 0.05,
     "ending_enabled": true,
     "ending_duration_sec": 4.5,
-    "ending_volume": 0.7
+    "ending_volume": 0.6
   },
   "cache": {
     "enabled": true,

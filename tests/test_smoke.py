@@ -31,10 +31,10 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.whisper_model_cache_dir, "models/whisper")
         self.assertTrue(config.cinema_music.enabled)
         self.assertEqual(config.cinema_music.folder, "musiccinema")
-        self.assertEqual(config.cinema_music.volume, 0.08)
+        self.assertEqual(config.cinema_music.volume, 0.05)
         self.assertTrue(config.cinema_music.ending_enabled)
         self.assertEqual(config.cinema_music.ending_duration_sec, 4.5)
-        self.assertEqual(config.cinema_music.ending_volume, 0.70)
+        self.assertEqual(config.cinema_music.ending_volume, 0.60)
         self.assertEqual(config.layout_mode, "auto")
         self.assertEqual(config.webcam_edge_margin_ratio, 0.15)
         self.assertIsNone(config.manual_webcam_crop)
@@ -1060,12 +1060,12 @@ class TestAudioMix(unittest.TestCase):
                 music_input_idx=1,
                 has_original_audio=True,
                 final_duration_sec=30.0,
-                music_volume=0.08,
-                music_ending_volume=0.70,
+                music_volume=0.05,
+                music_ending_volume=0.60,
                 music_ending_duration_sec=4.5,
             )
 
-        self.assertIn("if(gte(t\\,25.500)\\,0.700\\,0.080)", filter_str)
+        self.assertIn("if(gte(t\\,25.500)\\,0.600\\,0.050)", filter_str)
         self.assertIn(":eval=frame", filter_str)
 
 
@@ -1114,6 +1114,11 @@ class TestRenderer(unittest.TestCase):
         self.assertIn("veryfast", fast_args)
         self.assertIn("23", fast_args)
 
+        config.export.render_preset = "balanced"
+        balanced_args = _video_encode_args(config)
+        self.assertIn("medium", balanced_args)
+        self.assertIn("21", balanced_args)
+
         config.export.render_preset = "nvenc_fast"
         nvenc_args = _video_encode_args(config)
         self.assertIn("h264_nvenc", nvenc_args)
@@ -1156,7 +1161,7 @@ class TestRenderer(unittest.TestCase):
 
         self.assertEqual(Path(music_path).name, "cinema.mp3")
         self.assertEqual(music_volume, 0.10)
-        self.assertEqual(ending_volume, 0.70)
+        self.assertEqual(ending_volume, 0.60)
         self.assertEqual(ending_duration, 4.5)
 
     def test_cta_freeze_duration_prefers_voice_duration(self):

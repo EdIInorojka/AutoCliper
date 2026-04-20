@@ -375,11 +375,11 @@ def _is_cinema_render(layout: LayoutSpec, config: AppConfig) -> bool:
 
 def _cinema_music_volume(config: AppConfig) -> float:
     cinema_music = getattr(config, "cinema_music", None)
-    raw = getattr(cinema_music, "volume", 0.08) if cinema_music is not None else 0.08
+    raw = getattr(cinema_music, "volume", 0.05) if cinema_music is not None else 0.05
     try:
         volume = float(raw)
     except (TypeError, ValueError):
-        volume = 0.08
+        volume = 0.05
     return max(0.0, min(0.10, volume))
 
 
@@ -397,9 +397,9 @@ def _cinema_music_ending(config: AppConfig) -> tuple[Optional[float], float]:
         return None, 0.0
 
     try:
-        ending_volume = float(getattr(cinema_music, "ending_volume", 0.70))
+        ending_volume = float(getattr(cinema_music, "ending_volume", 0.60))
     except (TypeError, ValueError):
-        ending_volume = 0.70
+        ending_volume = 0.60
     ending_volume = max(0.0, min(1.0, ending_volume))
     return ending_volume, ending_duration
 
@@ -431,7 +431,7 @@ def _render_preset_values(name: str) -> dict:
         return {}
     presets = {
         "fast": {"codec": "libx264", "crf": 23, "preset": "veryfast"},
-        "balanced": {"codec": "libx264", "crf": 22, "preset": "slow"},
+        "balanced": {"codec": "libx264", "crf": 21, "preset": "medium"},
         "quality": {"codec": "libx264", "crf": 19, "preset": "slower"},
         "small": {"codec": "libx264", "crf": 24, "preset": "slow"},
         "nvenc_fast": {"codec": "h264_nvenc", "cq": 22, "preset": "p5"},

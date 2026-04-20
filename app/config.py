@@ -73,10 +73,10 @@ class MusicConfig:
 class CinemaMusicConfig:
     enabled: bool = True
     folder: str = "musiccinema"
-    volume: float = 0.08
+    volume: float = 0.05
     ending_enabled: bool = True
     ending_duration_sec: float = 4.5
-    ending_volume: float = 0.70
+    ending_volume: float = 0.60
 
 
 @dataclass
