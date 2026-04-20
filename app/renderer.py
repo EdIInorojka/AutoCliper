@@ -512,12 +512,13 @@ def render_all_clips(
     config: AppConfig,
     output_dir: str,
     temp_dir: str,
-    asr_words: Optional[list[dict]] = None,
+    discovery_asr=None,
 ) -> list[str]:
     """Render all highlight clips. Returns list of output paths."""
     ensure_dir(output_dir)
 
     success_paths = []
+    subtitle_session = None
     for i, segment in enumerate(segments):
         out_name = safe_filename(f"clip_{i+1}_{fmt_time(segment.start_sec)}_{fmt_time(segment.end_sec)}.mp4")
         out_path = os.path.join(output_dir, out_name)
@@ -527,6 +528,19 @@ def render_all_clips(
             success_paths.append(out_path)
             continue
 
+        clip_asr_words = None
+        if config.subtitles_enabled:
+            from app.asr import run_clip_subtitle_asr
+
+            clip_asr_words, subtitle_session = run_clip_subtitle_asr(
+                video_path,
+                segment,
+                temp_dir,
+                config,
+                discovery_asr=discovery_asr,
+                session=subtitle_session,
+            )
+
         success = render_clip(
             video_path=video_path,
             video_info=video_info,
@@ -535,7 +549,7 @@ def render_all_clips(
             config=config,
             output_path=out_path,
             temp_dir=temp_dir,
-            asr_words=asr_words,
+            asr_words=clip_asr_words,
             clip_index=i,
         )
 

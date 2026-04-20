@@ -80,6 +80,16 @@ class CinemaMusicConfig:
 
 
 @dataclass
+class HookConfig:
+    enabled: bool = True
+    strict_factual: bool = True
+    intro_window_sec: float = 2.0
+    search_backtrack_sec: float = 4.0
+    search_forward_sec: float = 1.0
+    question_bias: bool = True
+
+
+@dataclass
 class VariationConfig:
     enabled: bool = True
     intro_trim_randomization: float = 1.5
@@ -173,6 +183,7 @@ class AppConfig:
     cta: CTAConfig = field(default_factory=CTAConfig)
     music: MusicConfig = field(default_factory=MusicConfig)
     cinema_music: CinemaMusicConfig = field(default_factory=CinemaMusicConfig)
+    hook: HookConfig = field(default_factory=HookConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     cleanup_temp_files: bool = True
     delete_input_after_success: bool = False
@@ -207,6 +218,7 @@ def app_config_from_dict(data: Optional[dict]) -> AppConfig:
         "cinema_music": _merge_dataclass(
             CinemaMusicConfig, data.pop("cinema_music", None)
         ),
+        "hook": _merge_dataclass(HookConfig, data.pop("hook", None)),
         "cache": _merge_dataclass(CacheConfig, data.pop("cache", None)),
         "export": _merge_dataclass(ExportConfig, data.pop("export", None)),
         "variation": _merge_dataclass(VariationConfig, data.pop("variation", None)),

@@ -47,3 +47,5 @@ Thumbs.db
 
 # Env
 .env
+cookies.txt
+api_key.txt

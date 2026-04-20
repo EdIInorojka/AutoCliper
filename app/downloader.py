@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import parse_qs, urlparse
 
 from app.utils.console import get_console
 from app.utils.helpers import ffmpeg_exe, safe_filename
@@ -40,6 +41,48 @@ class ResolvedInput:
 
 def is_url(s: str) -> bool:
     return s.startswith("http://") or s.startswith("https://")
+
+
+def _configured_cookiefile_path() -> str | None:
+    cookies_file = os.environ.get("STREAMCUTER_COOKIES_FILE", "").strip()
+    if not cookies_file:
+        default_cookies = Path(__file__).resolve().parent.parent / "cookies.txt"
+        if default_cookies.exists():
+            cookies_file = str(default_cookies)
+    return cookies_file or None
+
+
+def _extract_youtube_video_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+
+    if host == "youtu.be":
+        candidate = parsed.path.strip("/").split("/", 1)[0]
+        return candidate or None
+
+    if host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+        query_id = parse_qs(parsed.query).get("v", [])
+        if query_id:
+            return query_id[0]
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2 and parts[0] in {"shorts", "live", "embed"}:
+            return parts[1]
+    return None
+
+
+def _validate_remote_url(input_str: str) -> None:
+    video_id = _extract_youtube_video_id(input_str)
+    if video_id is None:
+        return
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        return
+    raise RuntimeError(
+        "The YouTube link looks malformed. "
+        f"Expected an 11-character video id, got '{video_id}' ({len(video_id)} chars). "
+        "Check that you did not paste an extra character into the URL."
+    )
 
 
 def _is_ascii_path(path: str) -> bool:
@@ -239,11 +282,7 @@ def _base_yt_dlp_opts(temp_dir: str, outtmpl: str | None = None, *, announce: bo
             console.print(f"[dim]Using yt-dlp JS runtime: {next(iter(js_runtime))}[/dim]")
             console.print("[dim]Using yt-dlp remote components: ejs:github[/dim]")
 
-    cookies_file = os.environ.get("STREAMCUTER_COOKIES_FILE", "").strip()
-    if not cookies_file:
-        default_cookies = Path(__file__).resolve().parent.parent / "cookies.txt"
-        if default_cookies.exists():
-            cookies_file = str(default_cookies)
+    cookies_file = _configured_cookiefile_path()
     if cookies_file:
         ydl_opts["cookiefile"] = cookies_file
         if announce:
@@ -314,7 +353,6 @@ def _friendly_remote_extract_error_message(exc: Exception) -> str | None:
         for marker in (
             "sign in to confirm you're not a bot",
             "sign in to confirm you’re not a bot",
-            "sign in to confirm your age",
             "cookies for the authentication",
             "use --cookies-from-browser or --cookies",
             "use --cookies or --cookies-from-browser",
@@ -324,6 +362,25 @@ def _friendly_remote_extract_error_message(exc: Exception) -> str | None:
             "Remote extractor was blocked by the site. "
             "Your current cookies.txt looks stale or insufficient. "
             "Re-export cookies.txt from a signed-in browser and retry."
+        )
+    if any(
+        marker in text
+        for marker in (
+            "sign in to confirm your age",
+            "this video may be inappropriate for some users",
+            "age-restricted",
+        )
+    ):
+        cookies_file = _configured_cookiefile_path()
+        if cookies_file:
+            return (
+                "YouTube blocked this age-restricted video. "
+                f"The current cookie file does not pass the age check: {cookies_file}. "
+                "Re-export cookies.txt from a signed-in 18+ browser session and retry."
+            )
+        return (
+            "YouTube blocked this age-restricted video because no valid authenticated session was provided. "
+            "Add cookies.txt to the project root or use --cookies-from-browser with a signed-in 18+ browser profile."
         )
     return None
 
@@ -864,6 +921,7 @@ def _resolve_url_metadata_with_yt_dlp(yt_dlp, url: str, temp_dir: str, *, announ
 
 def resolve_input_metadata(input_str: str, temp_dir: str = "temp", *, announce: bool = False) -> InputMetadata:
     if is_url(input_str):
+        _validate_remote_url(input_str)
         try:
             import yt_dlp
         except ImportError as e:
@@ -941,6 +999,7 @@ def download_video(
     metadata: Optional[InputMetadata] = None,
 ) -> str:
     """Download video via yt-dlp into temp_dir. Returns path to downloaded file."""
+    _validate_remote_url(url)
     try:
         import yt_dlp
     except ImportError as e:

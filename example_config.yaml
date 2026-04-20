@@ -97,6 +97,15 @@ cinema_music:
   ending_duration_sec: 4.5
   ending_volume: 0.60
 
+# Hook optimization for stronger first 1-2 seconds.
+hook:
+  enabled: true
+  strict_factual: true
+  intro_window_sec: 2.0
+  search_backtrack_sec: 4.0
+  search_forward_sec: 1.0
+  question_bias: true
+
 # Persistent caches for expensive analysis
 cache:
   enabled: true

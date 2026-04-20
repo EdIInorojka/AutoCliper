@@ -161,18 +161,17 @@ def run_pipeline(config: AppConfig) -> None:
         config.subtitles_position = "slot_top"
         console.print("[dim]No webcam: moving subtitles to top-safe position[/dim]")
 
-    # Step 6: ASR
-    console.print("\n[step 6] Running speech recognition...")
-    asr_words = []
-    if config.subtitles_enabled:
-        from app.asr import run_asr
-        try:
-            asr_words = run_asr(video_path, temp_dir, config)
-        except Exception as e:
-            console.print(f"[yellow]ASR failed, continuing without subtitles: {e}[/yellow]")
-            asr_words = []
-    else:
-        console.print("[dim]Subtitles disabled[/dim]")
+    # Step 6: Discovery ASR
+    console.print("\n[step 6] Running speech analysis...")
+    discovery_asr = None
+    from app.asr import run_discovery_asr
+    try:
+        discovery_asr = run_discovery_asr(video_path, temp_dir, config)
+    except Exception as e:
+        console.print(f"[yellow]Discovery ASR failed, continuing without transcript signals: {e}[/yellow]")
+        discovery_asr = None
+    if not config.subtitles_enabled:
+        console.print("[dim]Subtitles disabled; discovery transcript still used for hooks/highlights[/dim]")
 
     # Step 7: Highlight detection
     console.print("\n[step 7] Finding highlights...")
@@ -183,7 +182,7 @@ def run_pipeline(config: AppConfig) -> None:
             video_info=video_info,
             config=config,
             temp_dir=temp_dir,
-            asr_words=asr_words if asr_words else None,
+            asr_segments=discovery_asr.segments if discovery_asr else None,
         )
     except Exception as e:
         console.print(f"[red]Highlight detection failed: {e}[/red]")
@@ -198,7 +197,24 @@ def run_pipeline(config: AppConfig) -> None:
         return
 
     from app.highlight_detector import write_highlight_report
-    write_highlight_report(video_info, segments, config)
+    write_highlight_report(
+        video_info,
+        segments,
+        config,
+        asr_metadata={
+            "mode": "two_pass",
+            "discovery": {
+                "enabled": discovery_asr is not None,
+                "language": discovery_asr.language if discovery_asr else "unknown",
+                "model": discovery_asr.model if discovery_asr else "",
+                "timings": discovery_asr.timings if discovery_asr else "segment",
+            },
+            "subtitles": {
+                "enabled": bool(config.subtitles_enabled),
+                "timings": "word_per_clip" if config.subtitles_enabled else "disabled",
+            },
+        },
+    )
 
     # Step 8: Render clips
     console.print("\n[step 8] Rendering clips...")
@@ -211,7 +227,7 @@ def run_pipeline(config: AppConfig) -> None:
         config=config,
         output_dir=output_dir,
         temp_dir=temp_dir,
-        asr_words=asr_words if asr_words else None,
+        discovery_asr=discovery_asr,
     )
 
     if not output_paths:

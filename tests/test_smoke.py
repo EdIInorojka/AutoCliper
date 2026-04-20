@@ -35,6 +35,12 @@ class TestConfig(unittest.TestCase):
         self.assertTrue(config.cinema_music.ending_enabled)
         self.assertEqual(config.cinema_music.ending_duration_sec, 4.5)
         self.assertEqual(config.cinema_music.ending_volume, 0.60)
+        self.assertTrue(config.hook.enabled)
+        self.assertTrue(config.hook.strict_factual)
+        self.assertEqual(config.hook.intro_window_sec, 2.0)
+        self.assertEqual(config.hook.search_backtrack_sec, 4.0)
+        self.assertEqual(config.hook.search_forward_sec, 1.0)
+        self.assertTrue(config.hook.question_bias)
         self.assertEqual(config.layout_mode, "auto")
         self.assertEqual(config.webcam_edge_margin_ratio, 0.15)
         self.assertIsNone(config.manual_webcam_crop)
@@ -136,9 +142,29 @@ class TestHelpers(unittest.TestCase):
 
         self.assertEqual(_select_model(120.0, config, "en", requested_language="en"), "medium.en")
         self.assertEqual(_select_model(2400.0, config, "en", requested_language="en"), "medium.en")
-        self.assertEqual(_select_model(120.0, config, "en", requested_language="auto"), "medium")
+        self.assertEqual(_select_model(120.0, config, "en", requested_language="auto"), "medium.en")
         self.assertEqual(_select_model(120.0, config, "ru", requested_language="ru"), "medium")
         self.assertEqual(_select_model(1200.0, config, "ru", requested_language="ru"), "medium")
+
+    def test_run_with_asr_progress_does_not_execute_work_twice(self):
+        from app import asr
+
+        calls = []
+
+        def _work(progress=None, task=None):
+            calls.append((progress is not None, task is not None))
+            return "ok"
+
+        result = asr._run_with_asr_progress(
+            description="Loading",
+            total=10.0,
+            work=_work,
+            progress_description="Running",
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0], (True, True))
 
     def test_asr_model_selection_respects_env_override(self):
         from app.asr import _select_model
@@ -236,6 +262,24 @@ class TestHelpers(unittest.TestCase):
 
         self.assertIsNotNone(message)
         self.assertIn("cookies.txt", message)
+
+    def test_remote_extract_error_mapping_detects_age_gate(self):
+        from app.downloader import _friendly_remote_extract_error_message
+
+        message = _friendly_remote_extract_error_message(
+            RuntimeError("Sign in to confirm your age. This video may be inappropriate for some users.")
+        )
+
+        self.assertIsNotNone(message)
+        self.assertIn("age-restricted", message.lower())
+
+    def test_validate_remote_url_rejects_malformed_youtube_id(self):
+        from app.downloader import _validate_remote_url
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _validate_remote_url("https://www.youtube.com/watch?v=8jAluLqCezcv")
+
+        self.assertIn("11-character video id", str(ctx.exception))
 
     def test_range_download_prefers_hls_formats(self):
         from app.downloader import _range_download_format_selector
@@ -1675,20 +1719,194 @@ class TestHighlightDetector(unittest.TestCase):
         from app.highlight_detector import HighlightSegment, write_highlight_report
         from app.config import AppConfig
         from app.probe import VideoInfo
+        import json
 
         with tempfile.TemporaryDirectory() as td:
             config = AppConfig(output_dir=td, clips_override=1)
             info = VideoInfo("video.mp4", 60, 30, 1280, 720, [])
             write_highlight_report(
                 info,
-                [HighlightSegment(1, 11, 0.75, ["audio_energy"], "scored")],
+                [
+                    HighlightSegment(
+                        1,
+                        11,
+                        0.75,
+                        ["audio_energy"],
+                        "scored",
+                        peak_sec=3.0,
+                        hook_mode="stream",
+                        hook_reason="question_lead",
+                        hook_intro_score=0.88,
+                        hook_text_preview="What did you do?",
+                        question_like=True,
+                    )
+                ],
                 config,
+                asr_metadata={"mode": "two_pass"},
             )
 
             report = Path(td) / "highlight_report.json"
             self.assertTrue(report.exists())
-            text = report.read_text(encoding="utf-8")
-            self.assertIn("audio_energy", text)
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(payload["asr"]["mode"], "two_pass")
+            self.assertIn("audio_energy", payload["segments"][0]["reasons"])
+            self.assertEqual(payload["segments"][0]["hook_reason"], "question_lead")
+            self.assertTrue(payload["segments"][0]["question_like"])
+
+    def test_hook_optimizer_prefers_question_led_opening_when_supported(self):
+        import numpy as np
+
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment, _apply_hook_optimization
+        from app.probe import VideoInfo
+
+        config = AppConfig(language="en", clips_override=1)
+        info = VideoInfo("video.mp4", 60.0, 30.0, 1280, 720, [])
+        segment = HighlightSegment(10.0, 30.0, 0.9, ["audio_energy"], "scored", peak_sec=15.0)
+        asr_segments = [
+            {"start": 11.0, "end": 12.0, "text": "What did you do?"},
+            {"start": 15.0, "end": 16.0, "text": "run now"},
+        ]
+
+        signal = np.zeros(80, dtype=np.float32)
+        rms = np.zeros(80, dtype=np.float32)
+        centroid = np.zeros(80, dtype=np.float32)
+        onset = np.zeros(80, dtype=np.float32)
+        signal[11:14] = 0.75
+        signal[15:18] = 0.50
+        rms[11:14] = 0.55
+        rms[15:18] = 0.35
+        centroid[11:14] = 0.30
+        centroid[15:18] = 0.20
+        onset[11:14] = 0.80
+        onset[15:18] = 0.55
+
+        optimized = _apply_hook_optimization(
+            [segment],
+            signal,
+            rms,
+            centroid,
+            onset,
+            1.0,
+            asr_segments,
+            "video.mp4",
+            info,
+            config,
+        )[0]
+
+        self.assertLessEqual(optimized.start_sec, 11.25)
+        self.assertTrue(optimized.question_like)
+        self.assertEqual(optimized.hook_reason, "question_lead")
+        self.assertIn("What did you do", optimized.hook_text_preview)
+        self.assertTrue(optimized.start_sec <= optimized.peak_sec <= optimized.end_sec)
+
+    def test_hook_optimizer_uses_non_question_cold_open_when_transcript_is_weak(self):
+        import numpy as np
+
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment, _apply_hook_optimization
+        from app.probe import VideoInfo
+
+        config = AppConfig(language="en", clips_override=1)
+        info = VideoInfo("video.mp4", 60.0, 30.0, 1280, 720, [])
+        segment = HighlightSegment(10.0, 30.0, 0.9, ["audio_energy"], "scored", peak_sec=15.0)
+        asr_segments = [
+            {"start": 13.0, "end": 14.0, "text": "come on now"},
+            {"start": 15.0, "end": 16.0, "text": "run run run"},
+        ]
+
+        signal = np.zeros(80, dtype=np.float32)
+        rms = np.zeros(80, dtype=np.float32)
+        centroid = np.zeros(80, dtype=np.float32)
+        onset = np.zeros(80, dtype=np.float32)
+        signal[15:18] = 0.90
+        rms[15:18] = 0.70
+        centroid[15:18] = 0.35
+        onset[15:18] = 0.95
+
+        optimized = _apply_hook_optimization(
+            [segment],
+            signal,
+            rms,
+            centroid,
+            onset,
+            1.0,
+            asr_segments,
+            "video.mp4",
+            info,
+            config,
+        )[0]
+
+        self.assertFalse(optimized.question_like)
+        self.assertIn(optimized.hook_reason, {"cold_open_strength", "dialogue_hook", "dead_air_trim"})
+        self.assertTrue(optimized.start_sec <= optimized.peak_sec <= optimized.end_sec)
+
+    def test_hook_optimizer_distinguishes_movie_from_stream_mode(self):
+        import numpy as np
+
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment, _apply_hook_optimization
+        from app.probe import VideoInfo
+
+        info = VideoInfo("video.mp4", 60.0, 30.0, 1280, 720, [])
+        segment = HighlightSegment(10.0, 30.0, 0.9, ["audio_energy"], "scored", peak_sec=15.0)
+        asr_segments = [
+            {"start": 11.0, "end": 12.0, "text": "What did you see?"},
+            {"start": 15.0, "end": 16.0, "text": "look over there"},
+        ]
+
+        signal = np.zeros(80, dtype=np.float32)
+        rms = np.zeros(80, dtype=np.float32)
+        centroid = np.zeros(80, dtype=np.float32)
+        onset = np.zeros(80, dtype=np.float32)
+        signal[11:14] = [0.50, 0.45, 0.40]
+        signal[15:18] = [0.95, 0.95, 0.95]
+        rms[11:14] = [0.30, 0.25, 0.20]
+        rms[15:18] = [0.90, 0.80, 0.70]
+        centroid[11:14] = [0.10, 0.10, 0.10]
+        centroid[15:18] = [0.40, 0.40, 0.40]
+        onset[11:14] = [0.30, 0.20, 0.10]
+        onset[15:18] = [1.00, 0.80, 0.50]
+
+        movie_config = AppConfig(language="en", layout_mode="cinema", clips_override=1)
+        stream_config = AppConfig(language="en", layout_mode="auto", clips_override=1)
+
+        visual_payload = {"motion": [0.0] * 80, "luma": [0.4] * 80, "step_sec": 1.0}
+        for idx in range(11, 14):
+            visual_payload["motion"][idx] = 0.45
+        visual_payload["luma"][11:14] = [0.2, 0.7, 0.3]
+
+        with patch("app.highlight_detector._load_visual_hook_signal", return_value=visual_payload):
+            movie_segment = _apply_hook_optimization(
+                [segment],
+                signal,
+                rms,
+                centroid,
+                onset,
+                1.0,
+                asr_segments,
+                "video.mp4",
+                info,
+                movie_config,
+            )[0]
+
+        stream_segment = _apply_hook_optimization(
+            [segment],
+            signal,
+            rms,
+            centroid,
+            onset,
+            1.0,
+            asr_segments,
+            "video.mp4",
+            info,
+            stream_config,
+        )[0]
+
+        self.assertNotEqual(movie_segment.start_sec, stream_segment.start_sec)
+        self.assertEqual(movie_segment.hook_mode, "movie")
+        self.assertEqual(stream_segment.hook_mode, "stream")
+        self.assertTrue(movie_segment.start_sec < stream_segment.start_sec)
 
 
 class TestDownloader(unittest.TestCase):
@@ -1716,6 +1934,119 @@ class TestDownloader(unittest.TestCase):
         if ca_bundle is not None:
             self.assertTrue(Path(ca_bundle).exists())
             ca_bundle.encode("ascii")
+
+
+class TestAsrTwoPass(unittest.TestCase):
+    def test_run_discovery_asr_skips_language_detection_for_explicit_language(self):
+        from app.asr import DiscoveryASRResult, run_discovery_asr
+        from app.config import AppConfig
+
+        config = AppConfig(language="en")
+
+        with tempfile.TemporaryDirectory() as td:
+            video_path = str(Path(td) / "video.mp4")
+            Path(video_path).write_bytes(b"fake")
+
+            with (
+                patch("app.asr._extract_audio_for_asr", return_value=True),
+                patch("app.asr._get_audio_duration", return_value=30.0),
+                patch("app.asr._load_or_detect_language", side_effect=AssertionError("language detection should be skipped")),
+                patch("app.asr._load_whisper_model", return_value=object()),
+                patch("app.asr._should_chunk_asr", return_value=False),
+                patch("app.asr._run_with_asr_progress", side_effect=lambda **kwargs: kwargs["work"]()),
+                patch("app.asr._transcribe_segment_rows_monolithic", return_value=[{"text": "Hello there", "start": 0.0, "end": 1.0}]),
+            ):
+                result = run_discovery_asr(video_path, td, config)
+
+        self.assertIsInstance(result, DiscoveryASRResult)
+        self.assertEqual(result.language, "en")
+        self.assertEqual(result.model, "medium.en")
+
+    def test_run_discovery_asr_uses_segment_timings_only(self):
+        from app.asr import run_discovery_asr
+        from app.config import AppConfig
+
+        config = AppConfig(language="en")
+
+        with tempfile.TemporaryDirectory() as td:
+            video_path = str(Path(td) / "video.mp4")
+            Path(video_path).write_bytes(b"fake")
+
+            class _Segment:
+                def __init__(self, start, end, text):
+                    self.start = start
+                    self.end = end
+                    self.text = text
+
+            calls = []
+
+            def _fake_transcribe(_model, _audio, _lang, *, word_timestamps):
+                calls.append(word_timestamps)
+                return iter([_Segment(0.0, 1.0, "What happened?")]), type("Info", (), {"language": "en"})(), False
+
+            with (
+                patch("app.asr._extract_audio_for_asr", return_value=True),
+                patch("app.asr._get_audio_duration", return_value=30.0),
+                patch("app.asr._load_whisper_model", return_value=object()),
+                patch("app.asr._should_chunk_asr", return_value=False),
+                patch("app.asr._run_with_asr_progress", side_effect=lambda **kwargs: kwargs["work"]()),
+                patch("app.asr._transcribe_segments", side_effect=_fake_transcribe),
+            ):
+                result = run_discovery_asr(video_path, td, config)
+
+        self.assertEqual(calls, [False])
+        self.assertEqual(result.segments[0]["text"], "What happened?")
+
+    def test_run_clip_subtitle_asr_requests_word_timestamps(self):
+        from app.asr import DiscoveryASRResult, run_clip_subtitle_asr
+        from app.config import AppConfig
+        from app.highlight_detector import HighlightSegment
+
+        config = AppConfig(language="en")
+        segment = HighlightSegment(10.0, 20.0, 0.9)
+        discovery = DiscoveryASRResult(language="en", model="medium.en", segments=[])
+
+        with tempfile.TemporaryDirectory() as td:
+            video_path = str(Path(td) / "video.mp4")
+            Path(video_path).write_bytes(b"fake")
+
+            class _Word:
+                def __init__(self, word, start, end):
+                    self.word = word
+                    self.start = start
+                    self.end = end
+
+            class _SegmentObj:
+                def __init__(self):
+                    self.start = 0.0
+                    self.end = 1.0
+                    self.text = "What happened"
+                    self.words = [_Word("What", 0.0, 0.4), _Word("happened", 0.4, 1.0)]
+
+            calls = []
+
+            def _fake_transcribe(_model, _audio, _lang, *, word_timestamps):
+                calls.append(word_timestamps)
+                return iter([_SegmentObj()]), type("Info", (), {"language": "en"})(), True
+
+            with (
+                patch("app.asr._extract_audio_for_asr", return_value=True),
+                patch("app.asr._load_whisper_model", return_value=object()),
+                patch("app.asr._transcribe_segments", side_effect=_fake_transcribe),
+            ):
+                words, session = run_clip_subtitle_asr(
+                    video_path,
+                    segment,
+                    td,
+                    config,
+                    discovery_asr=discovery,
+                    session=None,
+                )
+
+        self.assertEqual(calls, [True])
+        self.assertEqual(session.model_size, "medium.en")
+        self.assertEqual(words[0]["start"], 10.0)
+        self.assertEqual(words[0]["word"], "What")
 
 
 class TestCtaPolicy(unittest.TestCase):
